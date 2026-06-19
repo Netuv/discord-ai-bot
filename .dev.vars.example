@@ -1,0 +1,7 @@
+# Environment variables for local dev
+# Copy isi dari Discord Developer Portal:
+#   General Information → APPLICATION ID
+#   Bot → Token (kalau belum ada)
+
+DISCORD_APP_ID=isi_app_id_disini
+DISCORD_BOT_TOKEN=isi_bot_token_disini
