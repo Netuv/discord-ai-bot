@@ -9,6 +9,51 @@
 
 ---
 
+## 🧭 Agent Onboarding — WAJIB BACA
+
+> **Pesan untuk device/agent lain:** Jika kamu diminta melanjutkan project ini, lakukan langkah berikut **sebelum** mengerjakan task apa pun.
+
+### Langkah 1 — Aktifkan Skills
+
+Baca dan aktifkan semua skill yang tersedia di folder `.github/skills/`:
+
+| Skill | File | Untuk |
+|-------|------|-------|
+| Cloudflare | `.github/skills/cloudflare-skill.md` | Platform & API Cloudflare |
+| Workers Best Practices | `.github/skills/workers-best-practices.md` | Pola kode Workers yang benar |
+| Wrangler | `.github/skills/wrangler-skill.md` | CLI Wrangler & konfigurasi |
+| Agents SDK | `.github/skills/agents-sdk-skill.md` | Stateful agents di Workers |
+| Durable Objects | `.github/skills/durable-objects-skill.md` | Stateful coordination & SQLite |
+
+Baca juga `.github/copilot-instructions.md` dan `AGENTS.md` untuk instruksi agent tambahan.
+
+### Langkah 2 — Setup Development Environment
+
+```bash
+# 1. Clone repo (jika belum)
+git clone https://github.com/Netuv/discord-ai-bot.git
+cd discord-ai-bot
+
+# 2. Install dependencies
+npm install
+
+# 3. Setup environment variables
+cp .dev.vars.example .dev.vars
+# Edit .dev.vars — isi DISCORD_APP_ID dan DISCORD_BOT_TOKEN
+
+# 4. Generate types dari bindings
+npm run cf-typegen
+
+# 5. Jalankan dev server untuk verifikasi
+npm run dev
+```
+
+### Langkah 3 — Setelah Siap
+
+Setelah environment siap dan dev server berjalan dengan sukses, kamu bisa mulai mengerjakan task yang diminta. **Jangan lewati langkah di atas** — banyak tool dan binding hanya bisa berfungsi setelah environment terkonfigurasi dengan benar.
+
+---
+
 ## 📋 Daftar Isi
 
 - [🤖 Discord AI Bot](#-discord-ai-bot)

@@ -57,6 +57,17 @@ src/
 └── github-studio.ts    # GitHub API toolkit
 ```
 
+## Agent Onboarding Instructions
+
+If you were asked to continue this project by another agent or device:
+
+1. **Read README.md first** — especially the "Agent Onboarding — WAJIB BACA" section
+2. **Activate all skills** in `.github/skills/` (Cloudflare, Workers BP, Wrangler, Agents SDK, Durable Objects)
+3. **Run `npm install`** and set up environment variables from `.dev.vars.example`
+4. **Run `npm run cf-typegen`** to generate binding types
+5. **Run `npm run dev`** to verify development server works
+6. Only start working on the actual task after the dev server runs successfully
+
 ## Important Notes
 
 - Run `wrangler types` after changing bindings in `wrangler.jsonc`
