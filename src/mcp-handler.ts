@@ -4313,14 +4313,13 @@ ${modelLines}`,
   // ─── ARTICLE TOOL ───────────────────────────────────────
   {
     name: "ai-article",
-    description: "BUAT ARTIKEL + RISET WEB + GAMBAR + VIDEO dalam 1 perintah! HEADLINE pakai EMBED dengan warna kategori. Tiap section: [Narasi] → [Video] → [Gambar] dikelompok rapi. Tanpa kesimpulan — gaya ngobrol santai. Tool ini sudah include riset web otomatis — JANGAN pakai web-search/web-scrape terpisah sebelumnya! Gunakan parameter 'fast' untuk versi cepat tanpa gambar/video.",
+    description: "BUAT ARTIKEL + RISET WEB + GAMBAR + VIDEO dalam 1 perintah! HEADLINE pakai EMBED dengan warna kategori. Tiap section: [Narasi] → [Video] → [Gambar] dikelompok rapi. Tanpa kesimpulan — gaya ngobrol santai. Media dicari PARALEL biar cepet — semua gambar & video di-fetch barengan sambil embed dikirim!",
     inputSchema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Topik artikel (contoh: 'berita anime summer 2026', 'game rilis baru')" },
         channel_id: { type: "string", description: "ID channel Discord untuk kirim hasil" },
         guild_id: { type: "string", description: "ID guild/server Discord" },
-        fast: { type: "boolean", description: "Mode cepat: skip gambar & video, kirim lebih responsif" },
       },
       required: ["topic", "channel_id", "guild_id"],
     },
@@ -4332,7 +4331,6 @@ ${modelLines}`,
 
         const topic = args.topic;
         const channelId = args.channel_id;
-        const fastMode = args.fast === true;
 
         // ═══ RESEARCH ═══
         let research = { summary: "Gunakan pengetahuan umum.", reviewSummary: "" };
@@ -4351,9 +4349,9 @@ ${modelLines}`,
           article = generateFallbackArticle(topic);
         }
 
-        // ═══ PUBLISH ═══
+        // ═══ PUBLISH — paralel otomatis di dalam publishArticle ═══
         (globalThis as any).__LUMINA_ENV__ = env;
-        const pubResult = await publishArticle(token, channelId, article, { faster: fastMode });
+        const pubResult = await publishArticle(token, channelId, article);
 
         if (!pubResult.success) {
           return { content: [{ type: "text", text: `❌ Artikel gagal dikirim: ${pubResult.error}` }] };

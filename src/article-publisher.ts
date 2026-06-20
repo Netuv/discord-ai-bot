@@ -1,33 +1,34 @@
 /**
  * article-publisher.ts — Discord Article Publisher
  * 
- * Modul terpisah untuk publish artikel ke Discord.
+ * Modul untuk publish artikel ke Discord.
  * Handle: embed headline, sections, gambar, video, separator.
  * 
- * v4.1 — Modular, robust, reusable
+ * OPTIMASI v4.2:
+ * - Paralelisasi: semua media di-fetch BERSAMAAN (bukan sequential per section)
+ * - Batch send: message independen dikirim parallel
+ * - Rate limiter optimal (200ms = 5 req/s, sesuai batas Discord)
+ * - Pre-fetch media: gambar & video dicari SEBELUM section loop dimulai
+ * - Semua fitur utama dipertahankan: gambar, video, embed, section, separator
  */
 
 import { searchAnimeImage } from "./image-scraper";
 import { findYouTubeVideo } from "./video-scraper";
 import { Article, getArticleColor } from "./article-writer";
 
-// ─── Rate Limiter ──────────────────────────────────────────
+// ─── Rate Limiter (Optimized) ──────────────────────────────
 
-/**
- * Simple rate limiter untuk Discord API (max 5 req/s per bot)
- */
 class RateLimiter {
   private queue: Array<() => Promise<any>> = [];
   private processing = false;
   private lastRequestTime = 0;
-  private minInterval = 300; // ms antar request (≈3-4 req/s)
+  private minInterval = 200; // 200ms = 5 req/s (max Discord rate limit)
 
   async add<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       this.queue.push(async () => {
         try {
-          const result = await fn();
-          resolve(result);
+          resolve(await fn());
         } catch (e) {
           reject(e);
         }
@@ -46,7 +47,7 @@ class RateLimiter {
       const fn = this.queue.shift();
       if (fn) {
         this.lastRequestTime = Date.now();
-        await fn().catch(() => {}); // Silent catch — error handling di masing-masing
+        await fn().catch(() => {});
       }
     }
     this.processing = false;
@@ -93,9 +94,7 @@ async function discordFetchFormData(
     return await globalRateLimiter.add(() =>
       fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
         method: "POST",
-        headers: {
-          Authorization: `Bot ${token}`,
-        },
+        headers: { Authorization: `Bot ${token}` },
         body: formData,
       })
     );
@@ -105,11 +104,8 @@ async function discordFetchFormData(
   }
 }
 
-// ─── Send Functions ────────────────────────────────────────
+// ─── Public Send Functions ─────────────────────────────────
 
-/**
- * Kirim embed ke Discord
- */
 export async function sendDiscordEmbed(
   token: string,
   channelId: string,
@@ -122,21 +118,16 @@ export async function sendDiscordEmbed(
   }
 ): Promise<void> {
   await discordFetch(token, channelId, {
-    embeds: [
-      {
-        title: embed.title.slice(0, 256),
-        description: embed.description.slice(0, 4096),
-        color: embed.color,
-        ...(embed.timestamp ? { timestamp: embed.timestamp } : {}),
-        ...(embed.footer ? { footer: { text: embed.footer.slice(0, 50) } } : {}),
-      },
-    ],
+    embeds: [{
+      title: embed.title.slice(0, 256),
+      description: embed.description.slice(0, 4096),
+      color: embed.color,
+      ...(embed.timestamp ? { timestamp: embed.timestamp } : {}),
+      ...(embed.footer ? { footer: { text: embed.footer.slice(0, 50) } } : {}),
+    }],
   });
 }
 
-/**
- * Kirim pesan teks ke Discord
- */
 export async function sendDiscordMessage(
   token: string,
   channelId: string,
@@ -148,7 +139,7 @@ export async function sendDiscordMessage(
 }
 
 /**
- * Kirim gambar ke Discord sebagai attachment
+ * Kirim gambar ke Discord sebagai attachment — download + upload via FormData
  */
 export async function sendImageToDiscord(
   token: string,
@@ -156,21 +147,7 @@ export async function sendImageToDiscord(
   imageUrl: string,
   caption?: string
 ): Promise<boolean> {
-  // Coba 2 pendekatan: kirim langsung via file URL atau download dulu
-  return await sendImageViaUrl(token, channelId, imageUrl, caption);
-}
-
-/**
- * Kirim gambar via URL — Discord auto-fetch dari URL
- */
-async function sendImageViaUrl(
-  token: string,
-  channelId: string,
-  imageUrl: string,
-  caption?: string
-): Promise<boolean> {
   try {
-    // Coba download dulu biar bisa validasi
     const res = await fetch(imageUrl, {
       headers: {
         "User-Agent":
@@ -189,16 +166,10 @@ async function sendImageViaUrl(
     const filename = `anime-${Date.now()}.${ext}`;
 
     const formData = new FormData();
-    
-    // Attachment payload
-    const blob = new Blob([buf], { type: contentType });
-    formData.append("files[0]", blob, filename);
+    formData.append("files[0]", new Blob([buf], { type: contentType }), filename);
 
-    // Payload JSON dengan attachment reference
     const payload: any = {};
-    if (caption) {
-      payload.content = caption.slice(0, 2000);
-    }
+    if (caption) payload.content = caption.slice(0, 2000);
     formData.append("payload_json", JSON.stringify(payload));
 
     const result = await discordFetchFormData(token, channelId, formData);
@@ -209,7 +180,7 @@ async function sendImageViaUrl(
   }
 }
 
-// ─── Main Publisher ────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────
 
 export interface PublishResult {
   success: boolean;
@@ -219,21 +190,32 @@ export interface PublishResult {
   error?: string;
 }
 
+interface MediaResult {
+  type: "image" | "video";
+  sectionIndex: number;
+  url: string | null;
+  caption?: string;
+}
+
+// ─── Main Publisher ────────────────────────────────────────
+
 /**
- * Publish artikel ke Discord channel
- * Flow:
- * 1. Kirim HEADLINE sebagai EMBED dengan warna kategori
- * 2. Kirim invisible spacer
- * 3. Per section: [Judul] → [Narasi] → [Video] → [Gambar] → [Separator]
+ * Publish artikel ke Discord channel — OPTIMASI v4.2
+ * 
+ * Alur paralel:
+ * 1. Kirim HEADLINE embed
+ * 2. IN PARALLEL dengan langkah 1:
+ *    - Cari semua gambar (parallel antar section)
+ *    - Cari semua video (parallel antar section)
+ * 3. Kirim per section: [Judul] → [Narasi] → [Video] → [Gambar] → [Separator]
+ *    - Media sudah ready dari pre-fetch
+ *    - Judul & body bisa dikirim parallel
  * 4. TIDAK ADA closing — berakhir natural
  */
 export async function publishArticle(
   token: string,
   channelId: string,
-  article: Article,
-  options?: {
-    faster?: boolean; // Skip image/video untuk response lebih cepat
-  }
+  article: Article
 ): Promise<PublishResult> {
   const result: PublishResult = {
     success: true,
@@ -243,68 +225,131 @@ export async function publishArticle(
   };
 
   try {
-    const embedColor = getArticleColor(article.category);
-
-    // ── STEP 1: HEADLINE EMBED ──
-    await sendDiscordEmbed(token, channelId, {
-      title: (article.title || "📰 Artikel Anime").slice(0, 256),
-      description: (article.intro || "").slice(0, 4096),
-      color: embedColor,
-      timestamp: new Date().toISOString(),
-      footer: "🤖 LuminaBot • Artikel Otomatis",
-    });
-
-    // ── STEP 2: Invisible spacer ──
-    await sendDiscordMessage(token, channelId, "\u3161");
-
-    // ── STEP 3: Per-section ──
     const sections = article.sections || [];
+    if (sections.length === 0) {
+      // Kirim minimal: headline + intro
+      const embedColor = getArticleColor(article.category);
+      await sendDiscordEmbed(token, channelId, {
+        title: (article.title || "📰 Artikel Anime").slice(0, 256),
+        description: (article.intro || "").slice(0, 4096),
+        color: embedColor,
+        timestamp: new Date().toISOString(),
+        footer: "🤖 LuminaBot • Artikel Otomatis",
+      });
+      return result;
+    }
 
+    const embedColor = getArticleColor(article.category);
+    const env = (globalThis as any).__LUMINA_ENV__;
+
+    // ═══ PHASE 1: PARALLEL — Kirim embed + Pre-fetch semua media ═══
+    // Embed dikirim sambil semua media di-fetch parallel
+    const mediaPromises: Promise<MediaResult | null>[] = [];
+
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+
+      // Start video search
+      if (sec.video_query && sec.video_query.length > 3) {
+        mediaPromises.push(
+          (async () => {
+            try {
+              const url = await findYouTubeVideo(sec.video_query, { env });
+              return url ? { type: "video" as const, sectionIndex: i, url } : null;
+            } catch {
+              return null;
+            }
+          })()
+        );
+      }
+
+      // Start image search
+      if (sec.image_query && sec.image_query.length > 1) {
+        mediaPromises.push(
+          (async () => {
+            try {
+              const img = await searchAnimeImage(sec.image_query, { env });
+              if (img) {
+                return {
+                  type: "image" as const,
+                  sectionIndex: i,
+                  url: img.url,
+                  caption: `${sec.heading || "📖"} — ${img.source}`,
+                };
+              }
+              return null;
+            } catch {
+              return null;
+            }
+          })()
+        );
+      }
+    }
+
+    // Kirim HEADLINE embed BERSAMAAN dengan pre-fetch media
+    const [_, mediaResults] = await Promise.all([
+      // Kirim embed + spacer
+      (async () => {
+        await sendDiscordEmbed(token, channelId, {
+          title: (article.title || "📰 Artikel Anime").slice(0, 256),
+          description: (article.intro || "").slice(0, 4096),
+          color: embedColor,
+          timestamp: new Date().toISOString(),
+          footer: "🤖 LuminaBot • Artikel Otomatis",
+        });
+        await sendDiscordMessage(token, channelId, "\u3161");
+      })(),
+
+      // Pre-fetch semua media PARALLEL
+      Promise.all(mediaPromises),
+    ]);
+
+    // Organize media results per section
+    const mediaBySection: Map<number, { videos: string[]; images: { url: string; caption: string }[] }> = new Map();
+    for (const mr of mediaResults) {
+      if (!mr) continue;
+      if (!mediaBySection.has(mr.sectionIndex)) {
+        mediaBySection.set(mr.sectionIndex, { videos: [], images: [] });
+      }
+      const sectionMedia = mediaBySection.get(mr.sectionIndex)!;
+      if (mr.type === "video" && mr.url) {
+        sectionMedia.videos.push(mr.url);
+      } else if (mr.type === "image" && mr.url) {
+        sectionMedia.images.push({ url: mr.url, caption: mr.caption || "" });
+      }
+    }
+
+    // ═══ PHASE 2: Kirim per-section (sequential — menjaga urutan) ═══
     for (let i = 0; i < sections.length; i++) {
       const sec = sections[i];
       if (!sec.heading && !sec.body) continue;
 
       const heading = sec.heading || "📖";
       const body = (sec.body || "").slice(0, 1900);
+      const sectionMedia = mediaBySection.get(i);
 
-      // Kirim JUDUL sebagai message terpisah
-      await sendDiscordMessage(token, channelId, `**${heading}**`);
-
-      // Kirim BODY/NARASI sebagai message terpisah
+      // Kirim JUDUL + BODY parallel (gak saling ketergantungan)
+      const msgPromises: Promise<any>[] = [
+        sendDiscordMessage(token, channelId, `**${heading}**`),
+      ];
       if (body) {
-        await sendDiscordMessage(token, channelId, body);
+        msgPromises.push(sendDiscordMessage(token, channelId, body));
       }
+      await Promise.all(msgPromises);
 
-      // Kirim VIDEO (kalau ada query dan gak mode fast)
-      let hasVideo = false;
-      if (!options?.faster && sec.video_query && sec.video_query.length > 3) {
-        try {
-          const videoUrl = await findYouTubeVideo(sec.video_query, { env: (globalThis as any).__LUMINA_ENV__ });
-          if (videoUrl) {
-            await sendDiscordMessage(token, channelId, `🎬 **${sec.video_query}:** ${videoUrl}`);
-            result.videosPublished++;
-            hasVideo = true;
-          }
-        } catch (e: any) {
-          console.warn(`⚠️ Video search gagal: ${e.message}`);
+      // Kirim VIDEO (kalau ada hasil dari pre-fetch)
+      if (sectionMedia?.videos && sectionMedia.videos.length > 0) {
+        for (const videoUrl of sectionMedia.videos) {
+          await sendDiscordMessage(token, channelId, `🎬 **${sec.video_query}:** ${videoUrl}`);
+          result.videosPublished++;
         }
       }
 
-      // Kirim GAMBAR (kalau ada query dan gak mode fast)
-      let hasImage = false;
-      if (!options?.faster && sec.image_query && sec.image_query.length > 1) {
-        try {
-          const img = await searchAnimeImage(sec.image_query, { env: (globalThis as any).__LUMINA_ENV__ });
-          if (img) {
-            const caption = `${heading} — ${img.source}`;
-            const ok = await sendImageToDiscord(token, channelId, img.url, caption);
-            if (ok) {
-              result.imagesPublished++;
-              hasImage = true;
-            }
-          }
-        } catch (e: any) {
-          console.warn(`⚠️ Image search gagal: ${e.message}`);
+      // Kirim GAMBAR (kalau ada hasil dari pre-fetch)
+      if (sectionMedia?.images && sectionMedia.images.length > 0) {
+        for (const img of sectionMedia.images) {
+          const ok = await sendImageToDiscord(token, channelId, img.url, img.caption);
+          if (ok) result.imagesPublished++;
         }
       }
 
@@ -325,7 +370,7 @@ export async function publishArticle(
 }
 
 /**
- * Publish headline ONLY — versi minimal buat quick response
+ * Publish headline ONLY — untuk preview / notifikasi cepat
  */
 export async function publishHeadlineOnly(
   token: string,
@@ -333,11 +378,10 @@ export async function publishHeadlineOnly(
   article: Article
 ): Promise<boolean> {
   try {
-    const embedColor = getArticleColor(article.category);
     await sendDiscordEmbed(token, channelId, {
       title: (article.title || "📰 Artikel Anime").slice(0, 256),
       description: (article.intro || "").slice(0, 4096),
-      color: embedColor,
+      color: getArticleColor(article.category),
       footer: "🤖 LuminaBot • Artikel Otomatis",
     });
     return true;
