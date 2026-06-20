@@ -166,3 +166,6 @@ dist
 !.env.example
 .wrangler/
 .copilot-specs-cache/
+
+# Drive Upload Temp
+.tmp.driveupload/
