@@ -328,14 +328,13 @@ export async function publishArticle(
       const body = (sec.body || "").slice(0, 1900);
       const sectionMedia = mediaBySection.get(i);
 
-      // Kirim JUDUL + BODY parallel (gak saling ketergantungan)
-      const msgPromises: Promise<any>[] = [
-        sendDiscordMessage(token, channelId, `**${heading}**`),
-      ];
+      // Kirim JUDUL sebagai message TERPISAH (break line setelah judul!)
+      await sendDiscordMessage(token, channelId, `**${heading}**`);
+
+      // Kirim BODY/NARASI sebagai message terpisah setelah heading
       if (body) {
-        msgPromises.push(sendDiscordMessage(token, channelId, body));
+        await sendDiscordMessage(token, channelId, body);
       }
-      await Promise.all(msgPromises);
 
       // Kirim VIDEO (kalau ada hasil dari pre-fetch)
       if (sectionMedia?.videos && sectionMedia.videos.length > 0) {

@@ -182,13 +182,21 @@ export function buildArticlePrompt(
     `  "category": "anime/manga/game/breaking/announcement/general"\n` +
     `}\n` +
     `\n` +
-    `ATURAN:\n` +
+    `## ATURAN DISCORD (WAJIB DIINGAT!):\n` +
+    `- 🔴 HEADLINE dikirim sebagai EMBED (title + intro + warna kategori)\n` +
+    `- 🔴 BREAK LINE: Setiap JUDUL/HEADING WAJIB punya break line setelahnya!\n` +
+    `- 🔴 Judul dikirim sebagai MESSAGE TERPISAH dari body narasi (JANGAN digabung!)\n` +
+    `- 🔴 Tiap section format: [Judul message] → [Narasi body message] → [Video link] → [Gambar]\n` +
+    `- 🔴 Antar section dipisah separator "---"\n` +
+    `- 🔴 TIDAK ADA closing/kesimpulan — artikel berakhir natural\n` +
+    `\n` +
+    `## ATURAN GAYA BAHASA:\n` +
     `- Gaya santai kayak ngobrol di Discord ("aku-kamu")\n` +
     `- Paragraf pendek 2-3 kalimat, mengalir alami\n` +
-    `- Hook kuat di intro\n` +
+    `- Hook kuat di intro — bikin penasaran!\n` +
     `- Sertakan opini dari berbagai sumber (Reddit, forum, ANN) — kutip sumbernya!\n` +
     `- Cari konsensus publik: "Mayoritas setuju...", "Yang bikin ramai adalah..."\n` +
-    `- TIDAK ADA bullet list di body\n` +
+    `- TIDAK ADA bullet list di body — semua narasi!\n` +
     `- TIDAK ADA "Kesimpulannya" atau kata penutup formal\n` +
     `- JANGAN ngarang fakta — pake data real dari berita\n` +
     `- JANGAN tambah teks lain di luar JSON\n` +
