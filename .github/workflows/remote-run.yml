@@ -9,6 +9,11 @@ on:
         description: 'Perintah terminal yang akan dijalankan'
         required: true
         type: string
+      shell:
+        description: 'Shell (bash/pwsh)'
+        required: false
+        default: 'bash'
+        type: string
       working_directory:
         description: 'Working directory'
         required: false
@@ -28,10 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Mulai Eksekusi
+      - name: Info Eksekusi
         run: |
           echo "Run ID: ${{ inputs.run_id }}"
           echo "Working dir: ${{ inputs.working_directory }}"
+          echo "Shell: ${{ inputs.shell }}"
 
       - name: Set Working Directory
         working-directory: ${{ inputs.working_directory }}
