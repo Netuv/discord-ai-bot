@@ -1,16 +1,28 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "discord-ai-bot",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-06-19",
-  "observability": {
-    "enabled": true
-  },
-  "upload_source_maps": true,
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
-  "ai": {
-    "binding": "AI"
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "discord-ai-bot",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-19",
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"ai": {
+		"binding": "AI"
+	},
+	"kv_namespaces": [
+		{
+			"binding": "SCHEDULER_KV",
+			"id": "d55f00a62a194646b9c7bc069048f3c2",
+			"preview_id": "d55f00a62a194646b9c7bc069048f3c2"
+		}
+	],
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	}
 }

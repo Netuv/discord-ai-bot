@@ -12,6 +12,11 @@
 
 import { z } from "zod";
 import { queueAction, confirmAction, cancelAction, listPendingActions, formatPendingAction, getPendingAction } from "./mcp-confirm";
+import { addTask, updateTask, deleteTask, getTask, getTasks, getTaskLogs, handleTestCron, executeAiArticle } from "./scheduler";
+import { AiRouter, defaultProviderModels } from "./ai-router";
+import { WebScout } from "./web-scout";
+import { searchAnimeImage, downloadImage } from "./image-scraper";
+import { GitHubStudio } from "./github-studio";
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -44,12 +49,19 @@ interface JsonRpcResponse {
 
 // ─── AI Helpers ────────────────────────────────────────────
 
-const AI_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
-
 let _env: any = {};
+let _aiRouter: AiRouter | null = null;
+
+function getAiRouter(): AiRouter {
+  if (!_aiRouter) {
+    _aiRouter = new AiRouter(_env);
+  }
+  return _aiRouter;
+}
 
 export function setEnv(env: any) {
   _env = env;
+  _aiRouter = null; // Reset router kalau env berubah
 }
 
 export function getEnv(): any {
@@ -57,10 +69,8 @@ export function getEnv(): any {
 }
 
 async function aiChat(messages: { role: string; content: string }[]): Promise<string> {
-  if (!_env.AI) return "AI binding tidak tersedia.";
   try {
-    const result = await _env.AI.run(AI_MODEL, { messages });
-    return result.response || "AI tidak memberikan respons.";
+    return await getAiRouter().chat(messages as any);
   } catch (e: any) {
     return `Error AI: ${e.message}`;
   }
@@ -71,6 +81,36 @@ async function aiPrompt(system: string, user: string): Promise<string> {
     { role: "system", content: system },
     { role: "user", content: user },
   ]);
+}
+
+// ─── AI Command Generator ───────────────────────────────────
+// Ubah bahasa manusia ke perintah terminal yang tepat
+
+async function aiGenerateCommand(intent: string, repo: string): Promise<{ command: string; shell: string; working_directory: string }> {
+  const systemPrompt = (
+    `Kamu adalah ahli terminal Linux. Tugasmu mengubah permintaan bahasa manusia menjadi perintah shell yang tepat.\n` +
+    `Konteks: repository GitHub "${repo}" adalah project Cloudflare Workers (TypeScript).\n` +
+    `BALAS HANYA DENGAN FORMAT JSON INI, tanpa teks lain:\n` +
+    `{"command": "perintah shell", "shell": "bash", "working_directory": "."}\n` +
+    `Contoh:\n` +
+    `- "update packages" → {"command": "npm update", "shell": "bash", "working_directory": "."}\n` +
+    `- "cek isi folder" → {"command": "ls -la", "shell": "bash", "working_directory": "."}\n` +
+    `- "deploy ke cloudflare" → {"command": "npx wrangler deploy", "shell": "bash", "working_directory": "."}\n` +
+    `- "install sharp" → {"command": "npm install sharp", "shell": "bash", "working_directory": "."}\n` +
+    `- "git pull" → {"command": "git pull origin master", "shell": "bash", "working_directory": "."}`
+  );
+  const result = await aiPrompt(systemPrompt, intent);
+  try {
+    const parsed = JSON.parse(result);
+    return {
+      command: parsed.command || intent,
+      shell: parsed.shell || "bash",
+      working_directory: parsed.working_directory || ".",
+    };
+  } catch {
+    // Fallback: pakai intent mentah sebagai command
+    return { command: intent, shell: "bash", working_directory: "." };
+  }
 }
 
 // ─── Discord Formatter ─────────────────────────────────────
@@ -192,7 +232,7 @@ actionHandlers["purge-channel"] = async ({ channel_id, jumlah, user_id }) => {
       const err = await msgRes.text();
       return { content: [{ type: "text", text: `${bold("❌ Gagal ambil pesan")} (${msgRes.status}): ${err}` }] };
     }
-    const messages = await msgRes.json();
+    const messages: any = await msgRes.json();
     if (messages.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada pesan yang bisa dihapus." }] };
     const ids = messages.map((m: any) => m.id);
     const delRes = await fetch(`https://discord.com/api/v10/channels/${channel_id}/messages/bulk-delete`, {
@@ -386,7 +426,7 @@ actionHandlers["create-channel"] = async ({ guild_id, nama, topik, kategori }) =
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const ch = await res.json();
+      const ch: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Channel Dibuat")}\n• Nama: #${ch.name}\n• ID: ${inlineCode(ch.id)}` }] };
     } else {
       const err = await res.text();
@@ -469,7 +509,7 @@ actionHandlers["create-thread"] = async ({ channel_id, name, message_id, archive
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const ch = await res.json();
+      const ch: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Thread Dibuat")}\n• Nama: ${ch.name}\n• ID: ${inlineCode(ch.id)}` }] };
     } else {
       const err = await res.text();
@@ -552,7 +592,7 @@ actionHandlers["create-webhook"] = async ({ channel_id, name, avatar_url }) => {
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const wh = await res.json();
+      const wh: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Webhook Dibuat")}\n• Nama: ${wh.name}\n• ID: ${inlineCode(wh.id)}\n• Token: ${inlineCode(wh.token?.slice(0, 10) + "...")}` }] };
     } else {
       const err = await res.text();
@@ -594,7 +634,7 @@ actionHandlers["create-emoji"] = async ({ guild_id, name, image_url }) => {
       body: JSON.stringify({ name, image }),
     });
     if (res.ok) {
-      const emoji = await res.json();
+      const emoji: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Emoji Dibuat")}\n• Nama: ${emoji.name}\n• ID: ${inlineCode(emoji.id)}` }] };
     } else {
       const err = await res.text();
@@ -640,7 +680,7 @@ actionHandlers["create-sticker"] = async ({ guild_id, name, description, image_u
       body: form,
     });
     if (res.ok) {
-      const sticker = await res.json();
+      const sticker: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Sticker Dibuat")}\n• Nama: ${sticker.name}\n• ID: ${inlineCode(sticker.id)}` }] };
     } else {
       const err = await res.text();
@@ -687,7 +727,7 @@ actionHandlers["modify-guild"] = async ({ guild_id, name, description, icon_url 
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const g = await res.json();
+      const g: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Guild Diperbarui")}\n• Nama: ${g.name}\n• ID: ${inlineCode(g.id)}` }] };
     } else {
       const err = await res.text();
@@ -772,7 +812,7 @@ actionHandlers["create-role"] = async ({ guild_id, name, color, hoist, mentionab
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const role = await res.json();
+      const role: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Role Dibuat")}\n• Nama: ${role.name}\n• ID: ${inlineCode(role.id)}${role.color ? `\n• Color: #${role.color.toString(16).padStart(6, "0")}` : ""}` }] };
     } else {
       const err = await res.text();
@@ -797,7 +837,7 @@ actionHandlers["edit-role"] = async ({ guild_id, role_id, name, color, hoist, me
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const role = await res.json();
+      const role: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Role Diperbarui")}\n• Nama: ${role.name}\n• ID: ${inlineCode(role.id)}` }] };
     } else {
       const err = await res.text();
@@ -840,7 +880,7 @@ actionHandlers["edit-channel"] = async ({ channel_id, name, topic, slowmode, nsf
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const ch = await res.json();
+      const ch: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Channel Diperbarui")}\n• Nama: #${ch.name}\n• ID: ${inlineCode(ch.id)}` }] };
     } else {
       const err = await res.text();
@@ -867,7 +907,7 @@ actionHandlers["create-automod-rule"] = async ({ guild_id, name, event_type, act
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const rule = await res.json();
+      const rule: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ AutoMod Rule Dibuat")}\n• Nama: ${rule.name}\n• ID: ${inlineCode(rule.id)}` }] };
     } else {
       const err = await res.text();
@@ -907,7 +947,7 @@ actionHandlers["prune-members"] = async ({ guild_id, days, compute_only }) => {
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const data = await res.json();
+      const data: any = await res.json();
       if (compute_only) {
         return { content: [{ type: "text", text: `${bold("📊 Prune Count")}\n• ${data.pruned} member akan di-prune setelah ${days} hari.` }] };
       }
@@ -960,7 +1000,7 @@ actionHandlers["create-scheduled-event"] = async ({ guild_id, name, description,
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const ev = await res.json();
+      const ev: any = await res.json();
       return { content: [{ type: "text", text: `${bold("✅ Event Dibuat")}\n• Nama: ${ev.name}\n• ID: ${inlineCode(ev.id)}\n• Mulai: ${ev.scheduled_start_time}` }] };
     } else {
       const err = await res.text();
@@ -1010,7 +1050,7 @@ actionHandlers["create-poll"] = async ({ channel_id, question, answers, duration
       body: JSON.stringify(body),
     });
     if (res.ok) {
-      const msg = await res.json();
+      const msg: any = await res.json();
       return { content: [{ type: "text", text: `${bold("📊 Poll Dibuat")}\n• Channel: ${inlineCode(channel_id)}\n• Pertanyaan: ${sanitizeForDiscord(question)}\n• Jawaban: ${parsedAnswers.length}\n• Durasi: ${Math.min(Math.max(duration_hours || 24, 1), 168)} jam\n• Message ID: ${inlineCode(msg.id)}` }] };
     } else {
       const err = await res.text();
@@ -1021,11 +1061,32 @@ actionHandlers["create-poll"] = async ({ channel_id, question, answers, duration
   }
 };
 
-actionHandlers["github-run"] = async ({ owner, repo, command, shell, working_directory, run_id }) => {
+actionHandlers["github-run"] = async ({ owner, repo, command, shell, working_directory, run_id, intent }) => {
   const token = getEnv().GITHUB_TOKEN;
   if (!token) {
     return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset. Set via: npx wrangler secret put GITHUB_TOKEN" }] };
   }
+
+  // Natural language → command generator
+  let finalCommand = command;
+  let finalShell = shell || "bash";
+  let finalWorkDir = working_directory || ".";
+
+  if (!command && intent) {
+    try {
+      const generated = await aiGenerateCommand(intent, repo);
+      finalCommand = generated.command;
+      finalShell = generated.shell;
+      finalWorkDir = generated.working_directory;
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `${bold("❌ Gagal generate command")}: ${e.message}` }] };
+    }
+  }
+
+  if (!finalCommand) {
+    return { content: [{ type: "text", text: "❌ Tidak ada perintah yang diberikan. Kirim 'command' atau 'intent' (bahasa manusia)." }] };
+  }
+
   try {
     const workflowFile = "remote-run.yml";
     const res = await fetch(
@@ -1041,16 +1102,17 @@ actionHandlers["github-run"] = async ({ owner, repo, command, shell, working_dir
         body: JSON.stringify({
           ref: "main",
           inputs: {
-            command,
-            shell: shell || "bash",
-            working_directory: working_directory || ".",
+            command: finalCommand,
+            shell: finalShell,
+            working_directory: finalWorkDir,
             run_id,
           },
         }),
       }
     );
     if (res.ok) {
-      return { content: [{ type: "text", text: `${bold("🚀 GitHub Run Dispatched")}\n• Run ID: ${inlineCode(run_id)}\n• Repo: ${owner}/${repo}\n• Command: ${codeBlock("bash", command)}\n${divider()}\nGunakan ${inlineCode("github-run-status")} dengan Run ID untuk cek progress.\nLink: https://github.com/${owner}/${repo}/actions` }] };
+      const displayIntent = intent ? ` (dari: "${intent}")` : "";
+      return { content: [{ type: "text", text: `${bold("🚀 GitHub Run Dispatched")}\n• Run ID: ${inlineCode(run_id)}\n• Repo: ${owner}/${repo}\n• Perintah: ${codeBlock(finalShell, finalCommand)}${displayIntent}\n${divider()}\nGunakan ${inlineCode("github-run-status")} dengan Run ID untuk cek progress.\nLink: https://github.com/${owner}/${repo}/actions` }] };
     } else {
       const err = await res.text();
       return { content: [{ type: "text", text: `${bold("❌ Gagal Dispatch")} (${res.status}): ${err}\n\nPastikan:\n1. GITHUB_TOKEN valid\n2. File .github/workflows/remote-run.yml ada di repo\n3. Token punya akses actions:write` }] };
@@ -1068,7 +1130,7 @@ const tools: ToolDefinition[] = [
     description: "Cek status bot dan informasi server",
     inputSchema: { type: "object", properties: {} },
     handler: async () => ({
-      content: [{ type: "text", text: `✅ Bot Discord berjalan lancar di Cloudflare Edge!\nModel AI: ${AI_MODEL}\nRuntime: Cloudflare Workers` }],
+      content: [{ type: "text", text: `✅ Bot Discord berjalan lancar di Cloudflare Edge!\nModel AI: Router aktif (${getAiRouter().getActiveProviders().length} provider)\nRuntime: Cloudflare Workers` }],
     }),
   },
   {
@@ -1392,7 +1454,7 @@ const tools: ToolDefinition[] = [
           body: JSON.stringify({ content: pesan }),
         });
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           const jump = `https://discord.com/channels/@me/${channel_id}/${data.id}`;
           return { content: [{ type: "text", text: `${bold("✅ Pesan Terkirim")} • ${inlineCode(data.id)}\n• Channel: ${inlineCode(channel_id)}\n• [Lompat ke pesan](${jump})` }] };
         } else {
@@ -1424,7 +1486,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const channels = await res.json();
+          const channels: any = await res.json();
           const textChannels = channels
             .filter((ch: any) => [0, 5].includes(ch.type)) // GUILD_TEXT + GUILD_ANNOUNCEMENT
             .sort((a: any, b: any) => a.position - b.position)
@@ -1454,7 +1516,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const guilds = await res.json();
+          const guilds: any = await res.json();
           if (guilds.length === 0) return { content: [{ type: "text", text: "❌ Bot tidak ada di server manapun. Invite bot ke server dulu." }] };
           const list = guilds.map((g: any) => `  • **${g.name}** — ID: \`${g.id}\``).join("\n");
           const count = guilds.length;
@@ -1484,8 +1546,8 @@ const tools: ToolDefinition[] = [
           fetch("https://discord.com/api/v10/users/@me/guilds", { headers: { Authorization: `Bot ${token}` } }),
         ]);
         if (meRes.ok) {
-          const me = await meRes.json();
-          const guilds = guildsRes.ok ? await guildsRes.json() : [];
+          const me: any = await meRes.json();
+          const guilds: any = guildsRes.ok ? await guildsRes.json() : [];
           const appRes = await fetch(`https://discord.com/api/v10/applications/${me.id}/rpc`, {
             headers: { Authorization: `Bot ${token}` },
           }).catch(() => null);
@@ -1522,7 +1584,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const messages = await res.json();
+          const messages: any = await res.json();
           if (messages.length === 0) return { content: [{ type: "text", text: "📭 Belum ada pesan di channel ini." }] };
           const formatted = messages.slice(0, 20).map((m: any) => {
             const author = m.author?.global_name || m.author?.username || "Unknown";
@@ -1662,7 +1724,7 @@ const tools: ToolDefinition[] = [
           }),
         });
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           const ageLabel = max_age === 0 ? "Tidak kadaluarsa" : `${Math.round((max_age || 86400) / 3600)} jam`;
           const usesLabel = max_usages === 0 ? "Unlimited" : `${max_usages} kali`;
           return { content: [{ type: "text", text: `${bold("🔗 Invite Link Dibuat")}\n• Link: https://discord.gg/${data.code}\n• Channel: ${inlineCode(channel_id)}\n• Kadaluarsa: ${ageLabel}\n• Max pemakaian: ${usesLabel}` }] };
@@ -1695,7 +1757,7 @@ const tools: ToolDefinition[] = [
         if (action_type) url += `&action_type=${action_type}`;
         const res = await fetch(url, { headers: { Authorization: `Bot ${token}` } });
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           const entries = data.audit_log_entries || [];
           if (entries.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada entry audit log." }] };
           // Map action type ke nama
@@ -1748,7 +1810,7 @@ const tools: ToolDefinition[] = [
           fetch(`https://discord.com/api/v10/users/${user_id}`, { headers: { Authorization: `Bot ${token}` } }).catch(() => null),
         ]);
         if (memRes.ok) {
-          const member = await memRes.json();
+          const member: any = await memRes.json();
           const user = member.user || {};
           const roles = member.roles?.filter((r: string) => r !== guild_id) || [];
           const joined = new Date(member.joined_at).toLocaleDateString("id-ID");
@@ -1785,7 +1847,7 @@ const tools: ToolDefinition[] = [
         if (after) url += `&after=${after}`;
         const res = await fetch(url, { headers: { Authorization: `Bot ${token}` } });
         if (res.ok) {
-          const members = await res.json();
+          const members: any = await res.json();
           if (members.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada member (mungkin perlu pagination)." }] };
           const formatted = members.slice(0, 50).map((m: any) => {
             const name = m.user?.global_name || m.user?.username || "Unknown";
@@ -1886,7 +1948,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const roles = await res.json();
+          const roles: any = await res.json();
           const formatted = roles
             .filter((r: any) => r.name !== "@everyone")
             .sort((a: any, b: any) => b.position - a.position)
@@ -1921,7 +1983,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const bans = await res.json();
+          const bans: any = await res.json();
           if (bans.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada user yang diban di server ini." }] };
           const formatted = bans.map((b: any) => `• ${bold(b.user?.global_name || b.user?.username || "Unknown")} ${inlineCode(b.user?.id || "?")}${b.reason ? ` — ${b.reason}` : ""}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`🔨 ${bans.length} Banned Users`)} • ${inlineCode(guild_id)}\n${divider()}\n${formatted}` }] };
@@ -2183,7 +2245,7 @@ const tools: ToolDefinition[] = [
           body: JSON.stringify({ embeds: [embed] }),
         });
         if (res.ok) {
-          const msg = await res.json();
+          const msg: any = await res.json();
           return { content: [{ type: "text", text: `${bold("✅ Embed Terkirim")}\n• Channel: ${inlineCode(channel_id)}\n• Judul: ${sanitizeForDiscord(title)}\n• Message: ${inlineCode(msg.id)}` }] };
         } else {
           const err = await res.text();
@@ -2239,7 +2301,7 @@ const tools: ToolDefinition[] = [
           body: form,
         });
         if (res.ok) {
-          const msg = await res.json();
+          const msg: any = await res.json();
           return { content: [{ type: "text", text: `${bold("✅ File Terkirim")}\n• File: ${name}\n• Channel: ${inlineCode(channel_id)}\n• Message: ${inlineCode(msg.id)}` }] };
         } else {
           const err = await res.text();
@@ -2326,7 +2388,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           const threads = data.threads || [];
           if (threads.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada thread aktif di server ini." }] };
           const formatted = threads.map((t: any) => `• ${bold(t.name)} ${inlineCode(t.id)} — ${t.member_count || 0} members`).join("\n");
@@ -2416,7 +2478,7 @@ const tools: ToolDefinition[] = [
         if (channel_id) url = `https://discord.com/api/v10/channels/${channel_id}/webhooks`;
         const res = await fetch(url, { headers: { Authorization: `Bot ${token}` } });
         if (res.ok) {
-          const webhooks = await res.json();
+          const webhooks: any = await res.json();
           if (webhooks.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada webhook." }] };
           const formatted = webhooks.map((w: any) => `• ${bold(w.name)} ${inlineCode(w.id)} — Channel: ${w.channel_id}${w.token ? ` (token: ${w.token.slice(0, 8)}...)` : ""}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`🔗 ${webhooks.length} Webhook`)} • ${inlineCode(guild_id)}\n${divider()}\n${formatted}` }] };
@@ -2513,7 +2575,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const emojis = await res.json();
+          const emojis: any = await res.json();
           if (emojis.length === 0) return { content: [{ type: "text", text: "📭 Server ini tidak punya emoji kustom." }] };
           const formatted = emojis.map((e: any) => `• ${e.animated ? "<a:" : "<:"}${e.name}:${e.id}> ${bold(e.name)} ${inlineCode(e.id)}${e.roles?.length ? ` (restricted)` : ""}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`😀 ${emojis.length} Emoji`)} • ${inlineCode(guild_id)}\n${divider()}\n${formatted}` }] };
@@ -2574,7 +2636,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const stickers = await res.json();
+          const stickers: any = await res.json();
           if (stickers.length === 0) return { content: [{ type: "text", text: "📭 Server ini tidak punya sticker kustom." }] };
           const formatted = stickers.map((s: any) => `• ${bold(s.name)} ${inlineCode(s.id)} — ${s.tags || ""}${s.description ? `: ${s.description.slice(0, 60)}` : ""}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`🏷️ ${stickers.length} Sticker`)} • ${inlineCode(guild_id)}\n${divider()}\n${formatted}` }] };
@@ -2654,7 +2716,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           if (data.code) {
             return { content: [{ type: "text", text: `${bold("🔗 Vanity URL")}\n• https://discord.gg/${data.code}\n• Server: ${inlineCode(guild_id)}${data.uses ? `\n• Digunakan: ${data.uses}x` : ""}` }] };
           }
@@ -2685,7 +2747,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const invites = await res.json();
+          const invites: any = await res.json();
           if (invites.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada invite link aktif." }] };
           const formatted = invites.map((i: any) => `• https://discord.gg/${i.code} — ${bold(i.inviter?.username || "?")} → ${i.channel_name || i.channel_id || "?"} (${i.uses || 0} uses)`).join("\n");
           return { content: [{ type: "text", text: `${bold("🔗 ${invites.length} Invites")} • ${inlineCode(guild_id)}\n${divider()}\n${formatted}` }] };
@@ -2715,7 +2777,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           return { content: [{ type: "text", text: `${bold("📊 Widget Info")}\n• Nama: ${data.name}\n• ID: ${inlineCode(data.id)}\n• Members: ${data.presence_count || 0} online / ${data.members?.length || 0} total\n• Channel: ${data.channel_name || "N/A"}\n• Invite: ${data.instant_invite || "N/A"}` }] };
         } else {
           const err = await res.text();
@@ -2762,7 +2824,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const events = await res.json();
+          const events: any = await res.json();
           if (events.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada scheduled events." }] };
           const formatted = events.map((e: any) => {
             const status = e.status === 2 ? "🟢 Active" : e.status === 3 ? "✅ Completed" : e.status === 4 ? "❌ Canceled" : "⏳ Scheduled";
@@ -2824,7 +2886,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const regions = await res.json();
+          const regions: any = await res.json();
           const formatted = regions.map((r: any) => `• **${r.name}** — \`${r.id}\` ${r.optimal ? "⭐ Optimal" : ""} ${r.deprecated ? "⚠️ Deprecated" : ""}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`🌍 ${regions.length} Voice Regions`)}\n${divider()}\n${formatted}` }] };
         } else {
@@ -2853,7 +2915,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const ch = await res.json();
+          const ch: any = await res.json();
           const typeNames: Record<number, string> = { 0: "Text", 1: "DM", 2: "Voice", 3: "Group DM", 4: "Category", 5: "Announcement", 10: "Announcement Thread", 11: "Public Thread", 12: "Private Thread", 13: "Stage", 14: "Directory", 15: "Forum", 16: "Media" };
           return { content: [{ type: "text", text: `${bold(`#${ch.name || "N/A"}`)} ${inlineCode(ch.id)}\n${divider()}\n• **Type:** ${typeNames[ch.type] || ch.type}\n• **Guild:** ${ch.guild_id ? inlineCode(ch.guild_id) : "N/A"}\n• **Topic:** ${ch.topic || "(no topic)"}\n• **Position:** ${ch.position ?? "N/A"}\n• **NSFW:** ${ch.nsfw ? "✅" : "❌"}\n• **Parent:** ${ch.parent_id ? inlineCode(ch.parent_id) : "N/A"}` }] };
         } else {
@@ -2882,7 +2944,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const rules = await res.json();
+          const rules: any = await res.json();
           if (rules.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada AutoMod rules." }] };
           const formatted = rules.map((r: any) => `• ${bold(r.name)} ${inlineCode(r.id)} — Trigger: ${r.trigger_type} — ${r.enabled ? "✅ Active" : "❌ Disabled"}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`🛡️ ${rules.length} AutoMod Rules`)} • ${inlineCode(guild_id)}\n${divider()}\n${formatted}` }] };
@@ -2965,7 +3027,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const members = await res.json();
+          const members: any = await res.json();
           if (members.length === 0) return { content: [{ type: "text", text: `📭 Tidak ada member dengan nama "${query}".` }] };
           const formatted = members.map((m: any) => `• ${bold(m.user?.global_name || m.user?.username || "Unknown")} ${inlineCode(m.user?.id || "?")}${m.nick ? ` (${m.nick})` : ""}`).join("\n");
           return { content: [{ type: "text", text: `${bold(`🔍 ${members.length} Member Ditemukan`)} • query: "${sanitizeForDiscord(query)}"\n${divider()}\n${formatted}` }] };
@@ -3130,7 +3192,7 @@ const tools: ToolDefinition[] = [
           headers: { Authorization: `Bot ${token}` },
         });
         if (res.ok) {
-          const channels = await res.json();
+          const channels: any = await res.json();
           const categories = channels.filter((ch: any) => ch.type === 4);
           if (categories.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada kategori channel." }] };
           const formatted = categories.map((c: any) => `• ${bold(c.name)} ${inlineCode(c.id)}${c.position !== undefined ? ` (pos: ${c.position})` : ""}`).join("\n");
@@ -3167,7 +3229,7 @@ const tools: ToolDefinition[] = [
           }),
         });
         if (res.ok) {
-          const ch = await res.json();
+          const ch: any = await res.json();
           return { content: [{ type: "text", text: `${bold("✅ Kategori Dibuat")}\n• Nama: ${ch.name}\n• ID: ${inlineCode(ch.id)}` }] };
         } else {
           const err = await res.text();
@@ -3233,21 +3295,31 @@ const tools: ToolDefinition[] = [
   // ─── GITHUB TOOLS ────────────────────────────────────────
   {
     name: "github-run",
-    description: "JALANKAN PERINTAH TERMINAL di GitHub Actions runner. Bisa untuk git pull, build, deploy, dll. Hasilnya实时 (real-time) via GitHub Actions log.",
+    description: "JALANKAN PERINTAH TERMINAL di GitHub Actions runner. Bisa pakai command exact, atau bahasa manusia — AI akan generate perintah yang tepat. Contoh intent: 'update packages', 'cek isi folder', 'deploy ke cloudflare', 'git pull'",
     inputSchema: {
       type: "object",
       properties: {
-        owner: { type: "string", description: "Nama owner/org GitHub", default: "arghisaputra123" },
+        owner: { type: "string", description: "Nama owner/org GitHub", default: "Netuv" },
         repo: { type: "string", description: "Nama repository" },
-        command: { type: "string", description: "Perintah bash yang akan dijalankan" },
+        command: { type: "string", description: "Perintah bash exact (opsional — kalau kosong, pake intent)" },
+        intent: { type: "string", description: "Bahasa manusia: apa yang ingin dilakukan? Misal: 'cek disk usage', 'install dependencies', 'deploy'. AI akan generate command-nya." },
         shell: { type: "string", description: "Shell (bash/pwsh)", default: "bash" },
         working_directory: { type: "string", description: "Directory tujuan", default: "." },
       },
-      required: ["repo", "command"],
+      required: ["repo"],
     },
-    handler: async ({ owner, repo, command, shell, working_directory }) => {
+    handler: async ({ owner, repo, command, intent, shell, working_directory }) => {
       const run_id = crypto.randomUUID().slice(0, 8);
-      return requireConfirm("github-run", { owner: owner || "arghisaputra123", repo, command, shell: shell || "bash", working_directory: working_directory || ".", run_id }, `Jalankan command di ${owner || "arghisaputra123"}/${repo}\n${codeBlock("bash", command)}`);
+      const resolvedOwner = owner || "Netuv";
+      return requireConfirm("github-run", {
+        owner: resolvedOwner,
+        repo,
+        command,
+        intent,
+        shell: shell || "bash",
+        working_directory: working_directory || ".",
+        run_id,
+      }, `Jalankan perintah di ${resolvedOwner}/${repo}${command ? `\n${codeBlock("bash", command)}` : `\n🧠 Intent: "${intent || "?"}" (AI akan generate command)`}`);
     },
   },
   {
@@ -3256,7 +3328,7 @@ const tools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        owner: { type: "string", description: "Nama owner/org GitHub", default: "arghisaputra123" },
+        owner: { type: "string", description: "Nama owner/org GitHub", default: "Netuv" },
         repo: { type: "string", description: "Nama repository" },
         run_id: { type: "string", description: "Run ID dari response github-run" },
       },
@@ -3266,7 +3338,7 @@ const tools: ToolDefinition[] = [
       const token = getEnv().GITHUB_TOKEN;
       if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
       try {
-        const resolvedOwner = owner || "arghisaputra123";
+        const resolvedOwner = owner || "Netuv";
         // Cari workflow run terbaru yang cocok dengan run_id
         const runsRes = await fetch(
           `https://api.github.com/repos/${resolvedOwner}/${repo}/actions/runs?event=workflow_dispatch&per_page=10`,
@@ -3311,6 +3383,974 @@ const tools: ToolDefinition[] = [
         };
       } catch (e: any) {
         return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── GITHUB STUDIO TOOLS ─────────────────────────────────
+  {
+    name: "github-file",
+    description: "BACA, BUAT, UPDATE, atau HAPUS file di GitHub repo. Untuk content creator: edit README, artikel, konfigurasi langsung dari bot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "'read' — baca file | 'create' — buat baru | 'update' — update | 'delete' — hapus" },
+        path: { type: "string", description: "Path file di repo (contoh: 'README.md', 'blog/post-1.md')" },
+        content: { type: "string", description: "[create/update] Konten file" },
+        message: { type: "string", description: "Commit message", default: "📝 Update via Discord AI Bot" },
+        repo: { type: "string", description: "Nama repository (default: dari konteks)" },
+        owner: { type: "string", description: "Owner/org", default: "Netuv" },
+        branch: { type: "string", description: "Branch", default: "main" },
+      },
+      required: ["action", "path"],
+    },
+    handler: async ({ action, path, content, message, repo, owner, branch }) => {
+      try {
+        const token = getEnv().GITHUB_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
+        const gs = new GitHubStudio(token, owner || "Netuv", repo || "discord-ai-bot");
+
+        switch (action) {
+          case "read": {
+            const file = await gs.getFile(path, branch);
+            return {
+              content: [{ type: "text", text: `${bold("📄 File:")} ${inlineCode(path)}\n${divider()}\n${file.content.slice(0, 3800)}${file.content.length > 3800 ? "\n\n*(konten dipotong)*" : ""}` }],
+            };
+          }
+          case "create": {
+            if (!content) return { content: [{ type: "text", text: "❌ Parameter 'content' wajib untuk action 'create'." }] };
+            const result = await gs.createFile(path, content, message || `📝 Create ${path}`, branch);
+            return { content: [{ type: "text", text: `✅ File dibuat: ${inlineCode(path)}\n🔗 ${result.html_url}` }] };
+          }
+          case "update": {
+            if (!content) return { content: [{ type: "text", text: "❌ Parameter 'content' wajib untuk action 'update'." }] };
+            const result = await gs.updateFile(path, content, message || `📝 Update ${path}`, branch);
+            return { content: [{ type: "text", text: `✅ File diupdate: ${inlineCode(path)}\n🔗 ${result.html_url}` }] };
+          }
+          case "delete": {
+            const result = await gs.deleteFile(path, message || `🗑️ Delete ${path}`, branch);
+            return { content: [{ type: "text", text: result }] };
+          }
+          default:
+            return { content: [{ type: "text", text: "❌ Action tidak valid. Pilih: read, create, update, delete." }] };
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "github-pr",
+    description: "KELOLA Pull Request: list, buat, merge, cek status conflict. Untuk content creator: publish artikel via PR.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "'list' — lihat PR | 'create' — buat PR | 'merge' — merge PR | 'check' — cek conflict" },
+        title: { type: "string", description: "[create] Judul PR" },
+        head: { type: "string", description: "[create] Branch sumber (head)" },
+        base: { type: "string", description: "[create] Branch tujuan (default: main)", default: "main" },
+        body: { type: "string", description: "[create] Deskripsi PR" },
+        number: { type: "number", description: "[merge/check] Nomor PR" },
+        mergeMethod: { type: "string", description: "[merge] Metode: merge/squash/rebase", default: "squash" },
+        repo: { type: "string", description: "Nama repository" },
+        owner: { type: "string", description: "Owner/org", default: "Netuv" },
+      },
+      required: ["action"],
+    },
+    handler: async ({ action, title, head, base, body, number, mergeMethod, repo, owner }) => {
+      try {
+        const token = getEnv().GITHUB_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
+        const gs = new GitHubStudio(token, owner || "Netuv", repo);
+
+        switch (action) {
+          case "list": {
+            const prs = await gs.listPullRequests();
+            if (prs.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada open PR." }] };
+            const lines = prs.map((p) => `${p.state === "open" ? "🔀" : "✅"} **#${p.number}** ${p.title}\n   ${p.html_url}`);
+            return { content: [{ type: "text", text: `${bold("📋 Open Pull Requests")}\n${divider()}\n${lines.join("\n")}` }] };
+          }
+          case "create": {
+            if (!title || !head) return { content: [{ type: "text", text: "❌ Parameter 'title' dan 'head' wajib." }] };
+            const pr = await gs.createPullRequest(title, head, base || "main", body);
+            return { content: [{ type: "text", text: `✅ PR #${pr.number} created: ${pr.html_url}` }] };
+          }
+          case "merge": {
+            if (!number) return { content: [{ type: "text", text: "❌ Parameter 'number' (nomor PR) wajib." }] };
+            const result = await gs.mergePullRequest(number, undefined, mergeMethod as any);
+            return { content: [{ type: "text", text: result }] };
+          }
+          case "check": {
+            if (!number) return { content: [{ type: "text", text: "❌ Parameter 'number' (nomor PR) wajib." }] };
+            const check = await gs.checkPullRequest(number);
+            return { content: [{ type: "text", text: `${bold(`🔍 PR #${number}: ${check.status}`)}\n${divider()}\n${check.details}` }] };
+          }
+          default:
+            return { content: [{ type: "text", text: "❌ Action tidak valid. Pilih: list, create, merge, check." }] };
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "github-issue",
+    description: "KELOLA Issue: list, buat, update (label/assign/close), auto-triage. Untuk community manager: organized issues.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "'list' — lihat issues | 'create' — buat baru | 'update' — edit | 'triage' — auto-label & prioritas" },
+        title: { type: "string", description: "[create] Judul issue" },
+        body: { type: "string", description: "[create] Deskripsi issue" },
+        labels: { type: "string", description: "[create/update] Labels, pisah koma. Contoh: 'bug, urgent'" },
+        assignees: { type: "string", description: "[create/update] Assignees, pisah koma" },
+        number: { type: "number", description: "[update/triage] Nomor issue" },
+        state: { type: "string", description: "[update] 'open' atau 'closed'" },
+        repo: { type: "string", description: "Nama repository" },
+        owner: { type: "string", description: "Owner/org", default: "Netuv" },
+      },
+      required: ["action"],
+    },
+    handler: async ({ action, title, body, labels, assignees, number, state, repo, owner }) => {
+      try {
+        const token = getEnv().GITHUB_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
+        const gs = new GitHubStudio(token, owner || "Netuv", repo);
+
+        switch (action) {
+          case "list": {
+            const labelFilter = labels ? labels.split(",").map((l: string) => l.trim()) : undefined;
+            const issues = await gs.listIssues("open", labelFilter);
+            if (issues.length === 0) return { content: [{ type: "text", text: "📭 Tidak ada open issues." }] };
+            const lines = issues.map((i) => {
+              const labelStr = i.labels.length > 0 ? ` [${i.labels.join(", ")}]` : "";
+              return `🐛 **#${i.number}**${labelStr} ${i.title}\n   👤 ${i.assignees.join(", ") || "unassigned"} • 💬 ${i.comments}`;
+            });
+            return { content: [{ type: "text", text: `${bold("📋 Open Issues")}\n${divider()}\n${lines.join("\n")}` }] };
+          }
+          case "create": {
+            if (!title) return { content: [{ type: "text", text: "❌ Parameter 'title' wajib." }] };
+            const labelArr = labels ? labels.split(",").map((l: string) => l.trim()) : undefined;
+            const assignArr = assignees ? assignees.split(",").map((a: string) => a.trim()) : undefined;
+            const issue = await gs.createIssue(title, body, labelArr, assignArr);
+            return { content: [{ type: "text", text: `✅ Issue #${issue.number} dibuat: ${issue.html_url}` }] };
+          }
+          case "update": {
+            if (!number) return { content: [{ type: "text", text: "❌ Parameter 'number' wajib." }] };
+            const updates: any = {};
+            if (body) updates.body = body;
+            if (state) updates.state = state;
+            if (labels) updates.labels = labels.split(",").map((l: string) => l.trim());
+            if (assignees) updates.assignees = assignees.split(",").map((a: string) => a.trim());
+            const issue = await gs.updateIssue(number, updates);
+            return { content: [{ type: "text", text: `✅ Issue #${issue.number} diupdate. State: ${issue.state}. Labels: ${issue.labels.join(", ") || "none"}.` }] };
+          }
+          case "triage": {
+            if (!number) return { content: [{ type: "text", text: "❌ Parameter 'number' (issue) wajib." }] };
+            const router = getAiRouter();
+            const result = await gs.autoTriage(number, router);
+            return { content: [{ type: "text", text: `${bold("🏷️ Auto-Triage Result")}\n${divider()}\n${result.summary}\n🏷️ Labels: ${result.suggestedLabels.join(", ") || "none"}\n🔥 Priority: ${result.priority}` }] };
+          }
+          default:
+            return { content: [{ type: "text", text: "❌ Action tidak valid. Pilih: list, create, update, triage." }] };
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "github-release",
+    description: "KELOLA RELEASE: buat release + tag + auto-changelog, list releases. Untuk content creator: publikasi versi baru.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "'create' — buat release baru | 'list' — lihat releases" },
+        tag: { type: "string", description: "[create] Nama tag. Contoh: 'v1.2.0'" },
+        name: { type: "string", description: "[create] Nama release (default: pakai tag)" },
+        body: { type: "string", description: "[create] Catatan release (kosongkan untuk auto-changelog)" },
+        branch: { type: "string", description: "[create] Target branch", default: "main" },
+        generateNotes: { type: "boolean", description: "[create] Auto-generate changelog dari commits", default: true },
+        prerelease: { type: "boolean", description: "[create] Prerelease?", default: false },
+        repo: { type: "string", description: "Nama repository" },
+        owner: { type: "string", description: "Owner/org", default: "Netuv" },
+      },
+      required: ["action"],
+    },
+    handler: async ({ action, tag, name, body, branch, generateNotes, prerelease, repo, owner }) => {
+      try {
+        const token = getEnv().GITHUB_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
+        const gs = new GitHubStudio(token, owner || "Netuv", repo);
+
+        switch (action) {
+          case "create": {
+            if (!tag) return { content: [{ type: "text", text: "❌ Parameter 'tag' wajib. Contoh: 'v1.2.0'" }] };
+            const release = await gs.createRelease(tag, {
+              targetBranch: branch || "main",
+              name: name || tag,
+              body: body || "",
+              generateNotes: generateNotes !== false,
+              prerelease: prerelease === true,
+            });
+            return { content: [{ type: "text", text: `✅ Release ${release.tag_name} created!\n🔗 ${release.html_url}` }] };
+          }
+          case "list": {
+            const releases = await gs.listReleases();
+            if (releases.length === 0) return { content: [{ type: "text", text: "📭 Belum ada release." }] };
+            const lines = releases.map((r) => `📦 **${r.tag_name}**\n   ${r.html_url}`);
+            return { content: [{ type: "text", text: `${bold("📋 Releases")}\n${divider()}\n${lines.join("\n")}` }] };
+          }
+          default:
+            return { content: [{ type: "text", text: "❌ Action tidak valid. Pilih: create, list." }] };
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "github-community",
+    description: "LAPORAN KOMUNITAS & MILESTONE: health report, milestone tracker. Untuk community manager: pantau kesehatan repo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "'report' — community health report | 'milestones' — lihat milestone progress" },
+        repo: { type: "string", description: "Nama repository" },
+        owner: { type: "string", description: "Owner/org", default: "Netuv" },
+      },
+      required: ["action"],
+    },
+    handler: async ({ action, repo, owner }) => {
+      try {
+        const token = getEnv().GITHUB_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
+        const gs = new GitHubStudio(token, owner || "Netuv", repo);
+
+        switch (action) {
+          case "report": {
+            const report = await gs.communityReport();
+            return { content: [{ type: "text", text: report.summary }] };
+          }
+          case "milestones": {
+            const ms = await gs.listMilestones();
+            if (ms.length === 0) return { content: [{ type: "text", text: "📭 Belum ada milestones." }] };
+            const lines = ms.map((m) => {
+              const bar = "▓".repeat(Math.floor(m.progress / 10)) + "░".repeat(10 - Math.floor(m.progress / 10));
+              return `📍 **${m.title}** (${m.state})\n   ${bar} ${m.progress}% (${m.closed_issues}/${m.open_issues + m.closed_issues} issues)\n   Due: ${m.due_on ? new Date(m.due_on).toLocaleDateString("id-ID") : "—"}`;
+            });
+            return { content: [{ type: "text", text: `${bold("📊 Milestones")}\n${divider()}\n${lines.join("\n")}` }] };
+          }
+          default:
+            return { content: [{ type: "text", text: "❌ Action tidak valid. Pilih: report, milestones." }] };
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "github-blog",
+    description: "BLOG WORKFLOW: buat artikel + branch + commit + PR dalam satu perintah. Untuk content creator: publish konten cepat.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Judul artikel" },
+        content: { type: "string", description: "Konten artikel (Markdown)" },
+        filepath: { type: "string", description: "Path file. Contoh: 'blog/my-post.md'", default: "blog/post.md" },
+        draft: { type: "boolean", description: "True = simpan di branch aja tanpa PR", default: false },
+        tags: { type: "string", description: "Tags pisah koma. Contoh: 'anime, review, gaming'" },
+        repo: { type: "string", description: "Nama repository" },
+        owner: { type: "string", description: "Owner/org", default: "Netuv" },
+      },
+      required: ["title", "content"],
+    },
+    handler: async ({ title, content, filepath, draft, tags, repo, owner }) => {
+      try {
+        const token = getEnv().GITHUB_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ GITHUB_TOKEN belum diset." }] };
+        const gs = new GitHubStudio(token, owner || "Netuv", repo || "discord-ai-bot");
+        const tagArr = tags ? tags.split(",").map((t: string) => t.trim()) : undefined;
+
+        const result = await gs.blogWorkflow(title, content, filepath || "blog/post.md", {
+          draft: draft === true,
+          tags: tagArr,
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("📝 Blog Workflow Complete")}\n${divider()}\n${result.message}\n📂 Branch: \`${result.branch}\`\n🔗 ${result.pr?.html_url || `https://github.com/${owner || "Netuv"}/${repo || "discord-ai-bot"}/tree/${result.branch}`}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── SCHEDULER TOOLS ─────────────────────────────────────
+  {
+    name: "scheduler-list",
+    description: "LIHAT semua tugas terjadwal (scheduled tasks). Menampilkan ID, nama, cron, status, dan last run.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    handler: async () => {
+      try {
+        const tasks = await getTasks(getEnv());
+        if (tasks.length === 0) {
+          return { content: [{ type: "text", text: "📭 Belum ada tugas terjadwal. Gunakan `scheduler-add` untuk membuat tugas baru." }] };
+        }
+        const now = new Date();
+        const lines = tasks.map(t => {
+          const statusEmoji = !t.enabled ? "⏸️" : t.last_status === "success" ? "✅" : t.last_status === "failed" ? "❌" : "🆕";
+          const lastRunStr = t.last_run ? new Date(t.last_run).toLocaleString("id-ID") : "—";
+          return (
+            `${statusEmoji} **${t.name}** (\`${t.id}\`)\n` +
+            `  ⏰ \`${t.cron}\` • 🔄 ${t.run_count}x • 🕐 ${lastRunStr}\n` +
+            `  📋 ${t.description.slice(0, 100)}`
+          );
+        });
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("📅 Daftar Tugas Terjadwal")}\n${divider()}\n${bulletList(lines)}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "scheduler-add",
+    description: "TAMBAH tugas terjadwal baru. Pilih action type dan parameter yang sesuai.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Nama tugas (misal: 'Pagi sapa', 'Auto-clean', 'Daily report')" },
+        description: { type: "string", description: "Deskripsi tugas" },
+        cron: { type: "string", description: "Cron expression UTC. Contoh: '0 8 * * *' (setiap jam 8 pagi), '*/30 * * * *' (setiap 30 menit), '0 0 * * 1' (setiap Senin tengah malam), '0 9-17 * * 1-5' (setiap jam kerja)" },
+        action: { type: "string", description: "Jenis aksi: 'send-message' (kirim pesan), 'ai-prompt' (AI generate + kirim), 'ai-article' (AI artikel + embed + gambar), 'purge-channel' (bersihkan channel), 'custom-webhook' (panggil webhook), 'update-status' (status update), 'github-run' (jalankan GitHub Actions)" },
+        channel_id: { type: "string", description: "ID channel Discord tujuan output" },
+        guild_id: { type: "string", description: "ID guild/server Discord" },
+        message: { type: "string", description: "[send-message] Pesan yang akan dikirim" },
+        prompt: { type: "string", description: "[ai-prompt] Prompt untuk AI (default: 'Buatkan pengumuman singkat untuk hari ini.')" },
+        jumlah: { type: "number", description: "[purge-channel] Jumlah pesan yang akan dihapus (default: 10, max: 100)" },
+        webhook_url: { type: "string", description: "[custom-webhook] URL webhook tujuan" },
+        webhook_method: { type: "string", description: "[custom-webhook] HTTP method (GET/POST/PUT, default: POST)" },
+        webhook_body: { type: "string", description: "[custom-webhook] JSON body sebagai string" },
+        repo: { type: "string", description: "[github-run] Nama repository GitHub" },
+        command: { type: "string", description: "[github-run] Perintah bash yang akan dijalankan" },
+        status: { type: "string", description: "[update-status] Status message yang akan dikirim" },
+      },
+      required: ["name", "cron", "action", "channel_id", "guild_id"],
+    },
+    handler: async (args) => {
+      try {
+        const action = args.action as string;
+        const channelId = args.channel_id as string;
+        const guildId = args.guild_id as string;
+
+        // Validate action
+        const validActions = ["send-message", "ai-prompt", "ai-article", "purge-channel", "custom-webhook", "update-status", "github-run"];
+        if (!validActions.includes(action)) {
+          return { content: [{ type: "text", text: `❌ Action tidak valid. Pilih salah satu: ${validActions.join(", ")}` }] };
+        }
+
+        // Build params based on action
+        const params: Record<string, any> = {};
+
+        switch (action) {
+          case "send-message":
+            params.message = args.message || "⏰ **Tugas Terjadwal Otomatis**";
+            break;
+          case "ai-prompt":
+            params.prompt = args.prompt || "Buatkan pengumuman singkat untuk hari ini.";
+            break;
+          case "purge-channel":
+            params.jumlah = args.jumlah || 10;
+            break;
+          case "custom-webhook":
+            params.webhook_url = args.webhook_url;
+            params.method = args.webhook_method || "POST";
+            if (args.webhook_body) {
+              try { params.body = JSON.parse(args.webhook_body); } catch { params.body = args.webhook_body; }
+            }
+            if (!params.webhook_url) {
+              return { content: [{ type: "text", text: "❌ custom-webhook membutuhkan parameter `webhook_url`." }] };
+            }
+            break;
+          case "update-status":
+            params.status = args.status || "🟢 Bot aktif — tugas terjadwal berjalan";
+            break;
+          case "github-run":
+            params.repo = args.repo;
+            params.command = args.command || "echo 'Scheduled task run'";
+            if (!params.repo) {
+              return { content: [{ type: "text", text: "❌ github-run membutuhkan parameter `repo`." }] };
+            }
+            break;
+        }
+
+        const task = await addTask(getEnv(), {
+          name: args.name as string,
+          description: args.description || args.name as string,
+          cron: args.cron as string,
+          action: action as any,
+          params,
+          enabled: true,
+          channel_id: channelId,
+          guild_id: guildId,
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: (
+              `${bold("✅ Tugas Terjadwal Dibuat")}\n${divider()}\n` +
+              `• **Nama:** ${task.name}\n` +
+              `• **ID:** \`${task.id}\`\n` +
+              `• **Cron:** \`${task.cron}\` (UTC)\n` +
+              `• **Aksi:** ${task.action}\n` +
+              `• **Channel:** <#${channelId}>\n` +
+              `${divider()}\n` +
+              `Gunakan \`scheduler-toggle ${task.id}\` untuk nonaktifkan sementara.\n` +
+              `Gunakan \`scheduler-run ${task.id}\` untuk test jalan sekarang.`
+            ),
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "scheduler-remove",
+    description: "HAPUS tugas terjadwal permanent. Gunakan scheduler-list untuk lihat ID tugas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID tugas (dari scheduler-list)" },
+      },
+      required: ["task_id"],
+    },
+    handler: async ({ task_id }) => {
+      try {
+        const deleted = await deleteTask(getEnv(), task_id);
+        if (deleted) {
+          return { content: [{ type: "text", text: `🗑️ Tugas \`${task_id}\` berhasil dihapus.` }] };
+        }
+        return { content: [{ type: "text", text: `❌ Tugas \`${task_id}\` tidak ditemukan.` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "scheduler-toggle",
+    description: "AKTIFKAN/NONAKTIFKAN tugas terjadwal tanpa menghapus. Gunakan scheduler-list untuk lihat ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID tugas" },
+      },
+      required: ["task_id"],
+    },
+    handler: async ({ task_id }) => {
+      try {
+        const task = await getTask(getEnv(), task_id);
+        if (!task) {
+          return { content: [{ type: "text", text: `❌ Tugas \`${task_id}\` tidak ditemukan.` }] };
+        }
+        const updated = await updateTask(getEnv(), task_id, { enabled: !task.enabled });
+        if (updated?.enabled) {
+          return { content: [{ type: "text", text: `✅ Tugas **${updated.name}** (\`${task_id}\`) sekarang **AKTIF**.` }] };
+        }
+        return { content: [{ type: "text", text: `⏸️ Tugas **${updated?.name}** (\`${task_id}\`) sekarang **NONAKTIF**.` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "scheduler-run",
+    description: "JALANKAN tugas terjadwal SEKARANG juga (test). Berguna untuk testing sebelum dijadwalkan otomatis.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID tugas yang ingin dijalankan sekarang" },
+      },
+      required: ["task_id"],
+    },
+    handler: async ({ task_id }) => {
+      try {
+        const task = await getTask(getEnv(), task_id);
+        if (!task) {
+          return { content: [{ type: "text", text: `❌ Tugas \`${task_id}\` tidak ditemukan.` }] };
+        }
+
+        const result = await handleTestCron(getEnv(), task_id);
+        const detail = result.logs.join("\n");
+
+        return {
+          content: [{
+            type: "text",
+            text: (
+              `${bold("🚀 Test Eksekusi Scheduler")}\n${divider()}\n` +
+              `${detail}\n${divider()}\n` +
+              `✅ ${result.executed} berhasil, ❌ ${result.failed} gagal`
+            ),
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "scheduler-logs",
+    description: "LIHAT LOG eksekusi tugas terjadwal. Menampilkan riwayat 10 eksekusi terakhir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID tugas (kosongkan untuk lihat ringkasan semua)" },
+      },
+    },
+    handler: async ({ task_id }) => {
+      try {
+        if (task_id) {
+          const task = await getTask(getEnv(), task_id as string);
+          if (!task) {
+            return { content: [{ type: "text", text: `❌ Tugas \`${task_id}\` tidak ditemukan.` }] };
+          }
+          const logs = await getTaskLogs(getEnv(), task_id as string);
+          if (logs.length === 0) {
+            return { content: [{ type: "text", text: `📭 Belum ada log untuk tugas **${task.name}** (\`${task_id}\`).` }] };
+          }
+          const lines = logs.slice(0, 10).map(l =>
+            `${l.status === "success" ? "✅" : "❌"} **${l.task_name}** (${l.duration_ms}ms)\n` +
+            `  🕐 ${new Date(l.timestamp).toLocaleString("id-ID")}\n` +
+            `  📝 ${l.message.slice(0, 200)}`
+          );
+          return {
+            content: [{
+              type: "text",
+              text: `${bold(`📋 Log: ${task.name}`)}\n${divider()}\n${lines.join("\n\n")}`,
+            }],
+          };
+        }
+
+        // No task_id — show summary of all
+        const tasks = await getTasks(getEnv());
+        if (tasks.length === 0) {
+          return { content: [{ type: "text", text: "📭 Belum ada tugas terjadwal." }] };
+        }
+        const summaries = await Promise.all(tasks.map(async t => {
+          const logs = await getTaskLogs(getEnv(), t.id);
+          const lastLog = logs[0];
+          const lastStatus = lastLog
+            ? `${lastLog.status === "success" ? "✅" : "❌"} ${lastLog.message.slice(0, 60)}`
+            : "🆕 Belum pernah jalan";
+          return `• **${t.name}** (\`${t.id}\`) — ${lastStatus}`;
+        }));
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("📊 Ringkasan Log Scheduler")}\n${divider()}\n${summaries.join("\n")}\n${divider()}\nGunakan \`scheduler-logs {task_id}\` untuk detail.`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── PROVIDER/MODEL TOOLS ────────────────────────────────
+  {
+    name: "provider-list",
+    description: "LIHAT daftar semua AI provider yang terdaftar dan statusnya (aktif/nonaktif).",
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => {
+      try {
+        const env = getEnv();
+        const router = new AiRouter(env);
+        const activeProviders = router.getActiveProviders();
+
+        const lines = defaultProviderModels.map((p) => {
+          const isActive = activeProviders.some((a: any) => a.name === p.name);
+          const statusIcon = isActive ? "✅" : "⏸️";
+          const keyRequired = p.secret ? "(butuh key)" : "";
+          const secretStatus = p.secret
+            ? (env[p.secret] ? "✅ Key OK" : "❌ Key belum diset")
+            : "✅ Built-in";
+          return `${statusIcon} **${p.emoji} ${p.name}** ${keyRequired}
+  ${secretStatus} — ${p.models.length} model gratis`;
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("🤖 AI Provider List")}
+${divider()}
+${lines.join("\n")}
+${divider()}
+Gunakan ${inlineCode("model-list")} untuk lihat model per provider.`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "model-list",
+    description: "LIHAT daftar model gratis dari provider AI tertentu. Provider: Cloudflare Workers AI, NVIDIA NIM, OpenRouter, OpenCode",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", description: "Nama provider: Cloudflare Workers AI, NVIDIA NIM, OpenRouter, atau OpenCode" },
+      },
+      required: ["provider"],
+    },
+    handler: async ({ provider }) => {
+      try {
+        const prov = defaultProviderModels.find((p) => p.name.toLowerCase() === (provider as string).toLowerCase());
+        if (!prov) {
+          const available = defaultProviderModels.map((p) => `\`${p.name}\``).join(", ");
+          return { content: [{ type: "text", text: `❌ Provider "${provider}" tidak dikenal. Pilih: ${available}` }] };
+        }
+
+        const env = getEnv();
+        const router = new AiRouter(env);
+        const activeProviders = router.getActiveProviders();
+        const isActive = activeProviders.some((a: any) => a.name === prov.name);
+        const statusIcon = isActive ? "✅" : "⏸️";
+        const secretStatus = prov.secret
+          ? (env[prov.secret] ? "✅ Key tersimpan" : "❌ Key belum diset")
+          : "✅ Built-in (no setup)";
+
+        const modelLines = prov.models.map(
+          (m: any, i: number) => `${i === 0 ? "⭐" : "•"} \`${m.name}\`${m.note ? ` — ${m.note}` : ""}`
+        ).join("\n");
+
+        return {
+          content: [{
+            type: "text",
+            text: `${statusIcon} **${prov.emoji} ${prov.name}**
+${secretStatus}
+_${prov.note}_
+
+${bold(`Model Gratis (${prov.models.length}):`)}
+${divider()}
+${modelLines}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "scheduler-edit",
+    description: "EDIT parameter tugas terjadwal yang sudah ada. Semua parameter opsional — hanya yang diisi yang akan diubah.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID tugas yang akan diedit" },
+        name: { type: "string", description: "Nama baru tugas" },
+        description: { type: "string", description: "Deskripsi baru" },
+        cron: { type: "string", description: "Cron expression baru (UTC)" },
+        enabled: { type: "boolean", description: "Aktif/nonaktif" },
+        channel_id: { type: "string", description: "Channel ID baru" },
+        message: { type: "string", description: "[send-message] Pesan baru" },
+        prompt: { type: "string", description: "[ai-prompt] Prompt AI baru" },
+        jumlah: { type: "number", description: "[purge-channel] Jumlah hapus baru" },
+        status: { type: "string", description: "[update-status] Status message baru" },
+        repo: { type: "string", description: "[github-run] Repo baru" },
+        command: { type: "string", description: "[github-run] Command baru" },
+      },
+      required: ["task_id"],
+    },
+    handler: async (args) => {
+      try {
+        const taskId = args.task_id as string;
+        const existing = await getTask(getEnv(), taskId);
+        if (!existing) {
+          return { content: [{ type: "text", text: `❌ Tugas \`${taskId}\` tidak ditemukan.` }] };
+        }
+
+        const updates: Record<string, any> = {};
+        if (args.name) updates.name = args.name;
+        if (args.description) updates.description = args.description;
+        if (args.cron) updates.cron = args.cron;
+        if (args.enabled !== undefined) updates.enabled = args.enabled;
+        if (args.channel_id) updates.channel_id = args.channel_id;
+
+        // Update params
+        const params = { ...existing.params };
+        if (args.message) params.message = args.message;
+        if (args.prompt) params.prompt = args.prompt;
+        if (args.jumlah) params.jumlah = args.jumlah;
+        if (args.status) params.status = args.status;
+        if (args.repo) params.repo = args.repo;
+        if (args.command) params.command = args.command;
+        updates.params = params;
+
+        const updated = await updateTask(getEnv(), taskId, updates);
+        if (!updated) {
+          return { content: [{ type: "text", text: `❌ Gagal mengupdate tugas \`${taskId}\`.` }] };
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("✅ Tugas Diperbarui")}\n• **${updated.name}** (\`${updated.id}\`)\n• ⏰ \`${updated.cron}\`\n• ${updated.enabled ? "✅ Aktif" : "⏸️ Nonaktif"}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `${bold("❌ Error")}: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── WebScout: Web Search & Intelligence ─────────────────
+  {
+    name: "web-search",
+    description: "Cari informasi dari web multi-source (DuckDuckGo, Wikipedia, HackerNews)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Kata kunci pencarian" },
+        max: { type: "number", description: "Jumlah hasil maksimal", default: 5 },
+      },
+      required: ["query"],
+    },
+    handler: async (args: any) => {
+      try {
+        const scout = new WebScout(getEnv());
+        const results = await scout.search(args.query, { maxResults: args.max || 5 });
+
+        if (results.length === 0) {
+          return { content: [{ type: "text", text: "❌ Tidak ada hasil ditemukan." }] };
+        }
+
+        const lines = results.map((r, i) =>
+          `${i + 1}. **${r.title}** ([${r.source}])\n   ${r.snippet.slice(0, 150)}\n   ${inlineCode(r.url)}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("🔍 Web Search:")} ${inlineCode(args.query)}\n${divider()}\n${lines.join("\n\n")}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "web-scrape",
+    description: "Ambil konten readable dari satu URL (berita, artikel, dokumentasi)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL yang akan di-scrape" },
+        maxLength: { type: "number", description: "Maksimal karakter", default: 3000 },
+      },
+      required: ["url"],
+    },
+    handler: async (args: any) => {
+      try {
+        const scout = new WebScout(getEnv());
+        const page = await scout.scrapePage(args.url, { maxLength: args.maxLength || 3000 });
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("📄 Scrape:")} ${page.title}\n${divider()}\n🔗 ${inlineCode(page.url)}\n📊 ${page.wordCount} kata\n\n${page.snippet}\n\n${divider()}\n${bold("📑 Konten:")}\n${page.text.slice(0, 2500)}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error scrape: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "web-deep-research",
+    description: "Penelitian mendalam: AI buat sub-queries → search → scrape → AI summary",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Topik penelitian" },
+        depth: { type: "number", description: "Jumlah sub-queries (1-5)", default: 3 },
+      },
+      required: ["topic"],
+    },
+    handler: async (args: any) => {
+      try {
+        const scout = new WebScout(getEnv());
+        const router = getAiRouter();
+        const result = await scout.deepSearch(args.topic, router, {
+          maxSubQueries: Math.min(args.depth || 3, 5),
+        });
+
+        const sourcesSection = result.sources.length > 0
+          ? `\n\n${bold("📚 Sumber:")}\n${result.sources.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+          : "";
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("🧠 Deep Research:")} ${args.topic}\n${divider()}\n${bold("🔎 Sub-queries:")} ${result.subQueries.join(" | ")}\n\n${bold("📋 Ringkasan:")}\n${result.summary.slice(0, 3000)}${sourcesSection}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error deep research: ${e.message}` }] };
+      }
+    },
+  },
+  {
+    name: "web-browse",
+    description: "Buka beberapa URL sekaligus dan dapatkan kontennya",
+    inputSchema: {
+      type: "object",
+      properties: {
+        urls: { type: "string", description: "Daftar URL dipisah koma" },
+        maxPages: { type: "number", description: "Maksimal halaman", default: 3 },
+      },
+      required: ["urls"],
+    },
+    handler: async (args: any) => {
+      try {
+        const urls = args.urls.split(",").map((u: string) => u.trim()).filter(Boolean);
+        const scout = new WebScout(getEnv());
+        const pages = await scout.browseUrls(urls, { maxPages: args.maxPages || 3 });
+
+        if (pages.length === 0) {
+          return { content: [{ type: "text", text: "❌ Tidak ada halaman yang berhasil diambil." }] };
+        }
+
+        const sections = pages.map((p, i) =>
+          `${bold(`📄 ${i + 1}. ${p.title}`)}\n🔗 ${inlineCode(p.url)}\n${p.snippet.slice(0, 400)}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("🌐 Batch Browse")}\n${divider()}\n${sections.join("\n\n")}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error browse: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── IMAGE SCRAPE TOOL ──────────────────────────────────
+  {
+    name: "image-scrape",
+    description: "Cari gambar anime/manga dengan akurat. Multi-source (AniList + MyAnimeList) + title scoring. Cocok untuk article workflow.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Judul anime/manga (contoh: 'Jujutsu Kaisen', 'One Piece')" },
+        minScore: { type: "number", description: "Minimum match score (0-100, default 60)", default: 60 },
+      },
+      required: ["query"],
+    },
+    handler: async ({ query, minScore }) => {
+      try {
+        const env = getEnv();
+        const hasGoogle = !!env?.GOOGLE_SEARCH_API_KEY && !!env?.GOOGLE_SEARCH_ENGINE_ID;
+
+        // Quick Google API test
+        let googleDebug = "N/A";
+        if (hasGoogle) {
+          try {
+            const testUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=1`;
+            const testRes = await fetch(testUrl, { signal: AbortSignal.timeout(5000) });
+            const testData: any = await testRes.json();
+            if (testData.error) {
+              googleDebug = `❌ ${testData.error.code}: ${testData.error.message?.slice(0, 80)}`;
+            } else {
+              googleDebug = `✅ ${testData.items?.length || 0} items`;
+            }
+          } catch (e: any) {
+            googleDebug = `⚠️ ${e.message}`;
+          }
+        }
+
+        const result = await searchAnimeImage(query, { minScore: minScore || 60, env });
+        const sourceTag = !result ? "❌" :
+          result.source.startsWith("Google") ? "🟦 Google" :
+          result.source.startsWith("AniList") ? "🟪 AniList" :
+          result.source.startsWith("Kitsu") ? "🟩 Kitsu" :
+          result.source.startsWith("ANN") ? "🟧 ANN" : "🟥 MAL";
+
+        if (!result) {
+          return { content: [{ type: "text", text: `❌ Tidak ditemukan gambar untuk: ${inlineCode(query)}\n🔍 Google API: ${googleDebug}` }] };
+        }
+
+        const imgData = await downloadImage(result.url);
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("🖼️ Image Scrape:")} ${inlineCode(query)}\n${divider()}\n` +
+              `${sourceTag}: ${result.source}\n` +
+              `🔗 URL: ${result.url}\n` +
+              `✅ Validasi: ${imgData ? "Gambar valid ✅" : "⚠️ Gagal download"}\n` +
+              `🔍 Google API: ${googleDebug}`,
+          }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── ARTICLE TOOL ───────────────────────────────────────
+  {
+    name: "ai-article",
+    description: "BUAT ARTIKEL + RISIKET + GAMBAR dalam 1 perintah. Tool ini sudah termasuk riset web otomatis — JANGAN pakai web-search/web-scrape secara terpisah sebelum tool ini! Cukup kirim topic, channel_id, guild_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Topik artikel (contoh: 'berita anime summer 2026')" },
+        channel_id: { type: "string", description: "ID channel Discord untuk kirim hasil" },
+        guild_id: { type: "string", description: "ID guild/server Discord" },
+      },
+      required: ["topic", "channel_id", "guild_id"],
+    },
+    handler: async (args: any) => {
+      try {
+        const env = getEnv();
+        const token = env.DISCORD_TOKEN;
+        if (!token) return { content: [{ type: "text", text: "❌ DISCORD_TOKEN belum diset." }] };
+
+        // Create a temporary task object
+        const tempTask = {
+          id: "mcp-" + Date.now().toString(36),
+          name: `MCP Article: ${args.topic.slice(0, 40)}`,
+          description: `Artikel dari MCP: ${args.topic}`,
+          cron: "0 0 * * *",
+          action: "ai-article" as const,
+          params: {
+            topic: args.topic,
+            language: "Indonesia",
+          },
+          enabled: true,
+          channel_id: args.channel_id,
+          guild_id: args.guild_id,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          last_run: null,
+          last_status: null as any,
+          run_count: 0,
+        };
+
+        const result = await executeAiArticle(tempTask as any, env);
+        return { content: [{ type: "text", text: `${bold("📝 Artikel Terkirim!")}\n${divider()}\n${result}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
       }
     },
   },
@@ -3465,7 +4505,7 @@ async function handleMcpPost(request: Request, sessionId: string): Promise<Respo
   // Parse body
   let body: any;
   try {
-    body = await request.json();
+    body = await request.json() as any;
   } catch {
     return new Response(JSON.stringify(makeJsonRpcError(null, -32700, "Parse error: Invalid JSON")), {
       status: 400,
