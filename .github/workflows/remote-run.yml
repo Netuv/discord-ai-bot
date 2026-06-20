@@ -1,4 +1,4 @@
-# FEATURE 2026-06-19: Remote Terminal via GitHub Actions
+# Remote Terminal via GitHub Actions
 # Dipanggil oleh Discord MCP Bot via GitHub API
 name: Remote Run
 
@@ -8,11 +8,6 @@ on:
       command:
         description: 'Perintah terminal yang akan dijalankan'
         required: true
-        type: string
-      shell:
-        description: 'Shell (bash/pwsh)'
-        required: false
-        default: 'bash'
         type: string
       working_directory:
         description: 'Working directory'
@@ -31,57 +26,33 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 🏷️ Set Run ID
-        run: echo "RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
-
-      - name: 🚀 Mulai Eksekusi
+      - name: Mulai Eksekusi
         run: |
-          echo "### 🚀 Remote Run dimulai" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run ID:** \`${{ inputs.run_id }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Command:** \`${{ inputs.command }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Shell:** ${{ inputs.shell }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Directory:** ${{ inputs.working_directory }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Run ID: ${{ inputs.run_id }}"
+          echo "Working dir: ${{ inputs.working_directory }}"
 
-      - name: 📂 Set Working Directory
+      - name: Set Working Directory
         working-directory: ${{ inputs.working_directory }}
         run: |
-          echo "📂 Working directory: $(pwd)"
-          echo "👤 User: $(whoami)"
-          echo "🖥️ Host: $(hostname)"
+          echo "PWD: $(pwd)"
+          echo "User: $(whoami)"
+          echo "Node: $(node --version 2>&1)"
+          echo "NPM: $(npm --version 2>&1)"
 
-      - name: 💻 Eksekusi Command
+      - name: Eksekusi Command
         id: execute
         working-directory: ${{ inputs.working_directory }}
-        shell: ${{ inputs.shell }}
         run: |
-          echo "⏳ Menjalankan: ${{ inputs.command }}"
-          echo "────────────────────────"
-          
-          # Jalankan command dan capture output
-          {
-            echo "### ✅ Output" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            ${{ inputs.command }} 2>&1 | tee -a $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          }
-          
-          # Simpan exit code
-          echo "EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+          echo "Running: ${{ inputs.command }}"
+          echo "---OUTPUT---"
+          ${{ inputs.command }} 2>&1
+          echo "---EXIT: $?---"
+          echo "EXIT_CODE=$?" >> $GITHUB_ENV
 
-      - name: 📊 Hasil Akhir
+      - name: Hasil Akhir
         if: always()
         run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Hasil" >> $GITHUB_STEP_SUMMARY
-          echo "- **Exit Code:** \`${{ env.EXIT_CODE }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run ID:** \`${{ inputs.run_id }}\`" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ env.EXIT_CODE }}" = "0" ]; then
-            echo "- **Status:** ✅ Berhasil" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- **Status:** ❌ Gagal" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "Exit Code: ${{ env.EXIT_CODE }}"
+          echo "Run ID: ${{ inputs.run_id }}"
