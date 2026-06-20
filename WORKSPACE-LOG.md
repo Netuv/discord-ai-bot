@@ -1,6 +1,6 @@
 # Discord AI Bot — Workspace Log
 
-> **Tanggal:** 19 Juni 2026
+> **Tanggal:** 20 Juni 2026
 > **Project:** `discord-ai-bot` — Cloudflare Workers Discord Bot + MCP Server
 > **Worker URL:** `https://discord-ai-bot.luminary-bot.workers.dev`
 > **Laptop:** Probadi (Baru) — Workspace dipindah dari PC kantor
@@ -9,7 +9,7 @@
 
 ## 📋 Ringkasan Project
 
-Discord bot berbasis **Cloudflare Workers** dengan **MCP (Model Context Protocol)** server, AI integration (Llama 4 Scout), scheduler system, WebScout, GitHub Studio, dan ~114 tools untuk administrasi Discord.
+Discord bot berbasis **Cloudflare Workers** dengan **MCP (Model Context Protocol)** server, AI integration (Llama 4 Scout), scheduler system, WebScout, GitHub Studio, VideoScraper, dan ~115 tools untuk administrasi Discord.
 
 ### Tech Stack
 | Komponen | Teknologi |
@@ -42,12 +42,13 @@ discord-ai-bot/
 │   └── register-commands.mjs          # Register Discord slash commands
 ├── src/
 │   ├── index.ts                       # Entry point: fetch + scheduled handler
-│   ├── mcp-handler.ts                 # MCP server + ~103 tool definitions (~3950 lines)
+│   ├── mcp-handler.ts                 # MCP server + ~115 tool definitions (~4900 lines)
 │   ├── mcp-confirm.ts                 # Konfirmasi queue untuk admin actions
-│   ├── scheduler.ts                   # Scheduled task system
+│   ├── scheduler.ts                   # Scheduled task system (cron + ai-article)
 │   ├── user-config.ts                 # User config per-user via KV
 │   ├── web-scout.ts                   # Web intelligence (search, scrape, deep research)
-│   └── image-scraper.ts               # Image search (AniList + Jikan + scoring + download)
+│   ├── image-scraper.ts               # Image search (AniList + Jikan + Kitsu + scoring + download)
+│   └── video-scraper.ts               # Video search (DDG + Invidious + YT API + scoring + validasi) [NEW]
 ├── test/
 │   ├── index.spec.ts                  # Unit test
 │   ├── tsconfig.json                  # Test tsconfig
@@ -87,7 +88,7 @@ discord-ai-bot/
 
 ---
 
-## 🤖 MCP Tools (~103 tools)
+## 🤖 MCP Tools (~115 tools)
 
 ### AI & Productivity (17 tools)
 `status`, `ai-chat`, `translate`, `summarize`, `brainstorm`, `generate-code`, `code-review`, `explain-code`, `math-solve`, `generate-email`, `analyze-text`, `fetch-web`, `content-ideas`, `define`, `generate-story`, `convert`, `improve-writing`, `generate-quiz`, `career-advice`, `meal-plan`
@@ -134,6 +135,10 @@ discord-ai-bot/
 ### WebScout — Web Intelligence (4 tools)
 `web-search`, `web-scrape`, `web-deep-research`, `web-browse`
 
+### Media Search (2 tools)
+`image-scrape` — Cari gambar anime/manga multi-source (AniList + MAL + Kitsu) + validasi
+`video-search` — Cari video YouTube multi-source (DDG + Invidious + YT API) + scoring + validasi [NEW]
+
 ### GitHub Studio — Content Creator & Community (7 tools)
 `github-file`, `github-pr`, `github-issue`, `github-release`, `github-community`, `github-blog`
 
@@ -152,6 +157,7 @@ discord-ai-bot/
 |------|-----------|
 | `send-message` | Kirim teks ke channel |
 | `ai-prompt` | AI generate + kirim |
+| `ai-article` | AI generate artikel + riset web + gambar + video (otomatis) |
 | `purge-channel` | Hapus pesan bulk |
 | `custom-webhook` | Panggil webhook URL |
 | `update-status` | Kirim status message |
@@ -186,7 +192,7 @@ discord-ai-bot/
 
 ---
 
-## 🧠 Fix History (2026-06-19)
+## 🧠 Fix History (2026-06-19 — 2026-06-20)
 
 ### 5. Workspace Setup — Laptop Probadi
 - **Node.js:** v24.16.0 ✅
@@ -313,6 +319,68 @@ discord-ai-bot/
 - Data provider dipindah ke `src/ai-router.ts` sebagai `defaultProviderModels` — bisa dipakai bersama oleh index.ts dan mcp-handler.ts
 - Register command: `scripts/register-commands.mjs`
 
+### 16. Article Format v3.0 — Embed Headline + per-Section Group (2026-06-20)
+- **Masalah sebelumnya:** Format artikel berantakan — headline teks biasa, gambar & video terpisah acak, masih ada "Kesimpulannya"
+- **Perubahan di `scheduler.ts` — `executeAiArticle()`:**
+  - **STEP 3:** HEADLINE sekarang dikirim sebagai **EMBED** (bukan teks biasa) dengan warna sesuai kategori
+  - **STEP 4:** Tiap section dikelompok rapi: [**Narasi**] → [**Video** link] → [**Gambar** attachment]
+  - **STEP 5:** Separator `---` antar section
+  - **CLOSING DIHAPUS:** Artikel berakhir natural, tanpa "Kesimpulannya"
+  - Fungsi `sendEmbed()` baru — kirim embed ke Discord channel
+- **Perubahan `buildArticlePrompt()`:**
+  - Field `"closing"` dihapus dari format JSON
+  - Ditambahkan instruksi: "TIDAK ADA closing/kesimpulan — akhiri dengan kalimat natural"
+  - Ditambahkan "FORMAT DISCORD" section di prompt
+  - Ditambahkan contoh paragraf penutup natural
+- **Update `ARTIKEL-GUIDE.md`:** v2.0 → v3.0, semua contoh & format direfresh
+- **Update MCP tool `ai-article`:** Deskripsi diperbarui dengan format baru
+- **Koneksi:** Fungsi `sendEmbed()` reusable, warna dari `getArticleColor()`
+
+### 15. Video Scraper — Multi-Source YouTube Search + Scoring (2026-06-20)
+
+### 16. Article v3.0 — Embed Headline + VideoScraper Fix (2026-06-20)
+- **Headline sekarang pake Discord Embed** dengan warna sesuai kategori!
+- **Flow baru:** Headline Embed → Narasi per-section → Video → Gambar → Closing
+- **VideoScraper fix v3.1:** Validasi jadi lebih LENIENT:
+  - oEmbed sukses → pake title real
+  - oEmbed gagal → **tetap anggap valid** (format ID 11 char YouTube sudah cukup)
+  - Gak pake HEAD request lagi (sering diblokir Cloudflare IP)
+  - Early exit TIDAK perlu validasi lagi (2+ source setuju = reliable)
+  - Fallback: coba search tanpa kata "trailer/teaser" dengan threshold lebih rendah (40)
+- **sendEmbed()** — fungsi baru untuk kirim embed ke Discord
+- Deploy sukses: v2 → v3 (352 KiB, startup 6ms)
+- File baru: `src/video-scraper.ts` (902 baris) — Menggantikan `findYouTubeVideo()` lama yang rawan halusinasi
+- **Masalah sebelumnya:** `findYouTubeVideo()` cuma pake DuckDuckGo API → sering ngasih link ngaco
+- **Solusi:** Multi-source parallel fetch + scoring ketat + validasi URL + caching KV
+- **Sumber pencarian (GRATIS):**
+  1. **DuckDuckGo** — Instant Answer API + Lite HTML fallback
+  2. **Invidious API** — 4 instansi publik, gratis tanpa API key
+  3. **YouTube Data API** (optional) — kalau ada `YOUTUBE_API_KEY`
+  4. **Google Custom Search** (optional) — kalau ada `GOOGLE_SEARCH_API_KEY`
+  5. **YouTube oEmbed API** — validasi URL real-time + ambil title asli
+- **Scoring system (`videoTitleScore()`, 0-100):**
+  - Base score token-based (0-75) — sama kayak image-scraper
+  - Relevance bonus (0-15) — deteksi "trailer", "PV", "official", dll
+  - Specific keyword bonus (-10 to +10) — season/part/trailer awareness
+  - **Abbreviation expansion** — MHA→My Hero Academia, JJK→Jujutsu Kaisen, dll (20+ abbreviation)
+- **Validasi otomatis 3 lapis:**
+  1. YouTube oEmbed API — paling reliable
+  2. HEAD request ke thumbnail (`i.ytimg.com/vi/{id}/hqdefault.jpg`)
+  3. HEAD request ke watch page
+- **Optimasi:**
+  - Parallel fetch semua source (~2-4 detik)
+  - KV Cache 1 jam TTL
+  - Safe early exit (2+ source setuju + score ≥ 75)
+  - Fallback query jika hasil kosong
+- **Update file:**
+  - `src/scheduler.ts` — Import + pake `videoScraperFindVideo()` gantikan fungsi lama
+  - `src/mcp-handler.ts` — Import `searchYouTubeVideo` + tool MCP `video-search` baru
+- **Test file:** `test/video-scraper.spec.ts` (215 baris) — 18 test case scoring logic
+- **Scoring test results:** 18/18 ✅ termasuk abbreviation expansion
+- **Deploy:** Syntax check ✅ → Logic verification ✅ → `wrangler deploy` ✅
+  - Upload: 350 KiB (gzip: 66 KiB) | Startup: 8ms
+  - URL: `https://discord-ai-bot.luminary-bot.workers.dev`
+
 ### 1. verifyKey Async Fix
 - `verifyKey` dari `discord-interactions` adalah async (`__awaiter`)
 - **Before:** `const isValid = signature && timestamp && verifyKey(...)` — Promise selalu truthy
@@ -335,6 +403,54 @@ discord-ai-bot/
 - Setiap action handler punya try-catch sendiri
 
 ---
+
+### 17. Break Line v1.0 — Setiap Judul Wajib Break Line! (2026-06-20)
+
+#### 📋 Task Checklist
+- [x] **scheduler.ts** — Pisah heading dan body jadi message terpisah (break line setelah judul)
+- [x] **scheduler.ts** — Tambah invisible spacer (`ㅤ`) setelah HEADLINE embed
+- [x] **scheduler.ts** — Update flow comment dengan format BREAK LINE v1.0
+- [x] **buildArticlePrompt()** — Tambah aturan break line di prompt AI
+- [x] **ARTIKEL-GUIDE.md** — Update panduan + contoh + checklist v3.1
+- [x] **WORKSPACE-LOG.md** — Catat perubahan ini
+
+#### ✅ After Deployment — Changes Verified & Deployed
+| # | File/Fitur | Status | Keterangan |
+|---|------------|--------|------------|
+| 1 | `src/scheduler.ts` — Section send | ✅ Deploy | Heading & body jadi 2 message terpisah |
+| 2 | `src/scheduler.ts` — Embed spacer | ✅ Deploy | Invisible spacer (`ㅤ`) setelah HEADLINE |
+| 3 | `src/scheduler.ts` — Flow comment | ✅ Deploy | Updated ke format BREAK LINE v1.0 |
+| 4 | `buildArticlePrompt()` | ✅ Deploy | Prompt AI tambah aturan break line |
+| 5 | `ARTIKEL-GUIDE.md` | ✅ Deploy | Dokumentasi v3.1 + aturan break line |
+| 6 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
+
+---
+> **Signed:** 20 Juni 2026, 19:44 WIB — Break Line v1.0 implemented & verified ✅
+> **Updated by Kira**
+
+### 18. Multi-Sumber Review v4.0 — Gak Cuma MAL! (2026-06-20)
+
+#### 📋 Task Checklist
+- [x] **researchReviews()** — Fungsi baru cari review & opini dari Reddit, ANN, forum, Twitter/X
+- [x] **webResearch()** — Di-upgrade: parallel fetch berita + review sekaligus
+- [x] **buildArticlePrompt()** — Tambah section SUMBER & REVIEW MULTI-SUMBER di prompt AI
+- [x] **executeAiArticle()** — Review data diteruskan ke prompt AI
+- [x] **ARTIKEL-GUIDE.md** — Update v4.0: cara riset review + contoh paragraf multi-sumber
+- [x] **npx tsc --noEmit** — Zero errors
+
+#### ✅ After Deployment — Changes Verified & Deployed
+| # | File/Fitur | Status | Keterangan |
+|---|------------|--------|------------|
+| 1 | `researchReviews()` — NEW | ✅ Deploy | Cari review multi-query, scrape top 4, format summary |
+| 2 | `webResearch()` — Upgrade | ✅ Deploy | Parallel berita + review, return reviewSummary |
+| 3 | `executeAiArticle()` — STEP 1 | ✅ Deploy | Review summary diteruskan ke prompt AI |
+| 4 | `buildArticlePrompt()` — Prompt AI | ✅ Deploy | Section SUMBER & REVIEW + instruksi multi-sumber |
+| 5 | `ARTIKEL-GUIDE.md` | ✅ Deploy | v4.0 — Panduan riset review + contoh baru |
+| 6 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
+
+---
+> **Signed:** 20 Juni 2026, 19:44 WIB — Multi-Sumber Review v4.0 implemented ✅
+> **Updated by Kira**
 
 ## 📦 Dependencies
 

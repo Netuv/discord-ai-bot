@@ -16,7 +16,10 @@ import { addTask, updateTask, deleteTask, getTask, getTasks, getTaskLogs, handle
 import { AiRouter, defaultProviderModels } from "./ai-router";
 import { WebScout } from "./web-scout";
 import { searchAnimeImage, downloadImage } from "./image-scraper";
+import { searchYouTubeVideo } from "./video-scraper";
 import { GitHubStudio } from "./github-studio";
+import { researchArticle, generateArticle, generateFallbackArticle } from "./article-writer";
+import { publishArticle } from "./article-publisher";
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -4310,13 +4313,14 @@ ${modelLines}`,
   // ─── ARTICLE TOOL ───────────────────────────────────────
   {
     name: "ai-article",
-    description: "BUAT ARTIKEL + RISIKET + GAMBAR dalam 1 perintah. Tool ini sudah termasuk riset web otomatis — JANGAN pakai web-search/web-scrape secara terpisah sebelum tool ini! Cukup kirim topic, channel_id, guild_id.",
+    description: "BUAT ARTIKEL + RISET WEB + GAMBAR + VIDEO dalam 1 perintah! HEADLINE pakai EMBED dengan warna kategori. Tiap section: [Narasi] → [Video] → [Gambar] dikelompok rapi. Tanpa kesimpulan — gaya ngobrol santai. Tool ini sudah include riset web otomatis — JANGAN pakai web-search/web-scrape terpisah sebelumnya! Gunakan parameter 'fast' untuk versi cepat tanpa gambar/video.",
     inputSchema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Topik artikel (contoh: 'berita anime summer 2026')" },
+        topic: { type: "string", description: "Topik artikel (contoh: 'berita anime summer 2026', 'game rilis baru')" },
         channel_id: { type: "string", description: "ID channel Discord untuk kirim hasil" },
         guild_id: { type: "string", description: "ID guild/server Discord" },
+        fast: { type: "boolean", description: "Mode cepat: skip gambar & video, kirim lebih responsif" },
       },
       required: ["topic", "channel_id", "guild_id"],
     },
@@ -4326,29 +4330,91 @@ ${modelLines}`,
         const token = env.DISCORD_TOKEN;
         if (!token) return { content: [{ type: "text", text: "❌ DISCORD_TOKEN belum diset." }] };
 
-        // Create a temporary task object
-        const tempTask = {
-          id: "mcp-" + Date.now().toString(36),
-          name: `MCP Article: ${args.topic.slice(0, 40)}`,
-          description: `Artikel dari MCP: ${args.topic}`,
-          cron: "0 0 * * *",
-          action: "ai-article" as const,
-          params: {
-            topic: args.topic,
-            language: "Indonesia",
-          },
-          enabled: true,
-          channel_id: args.channel_id,
-          guild_id: args.guild_id,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          last_run: null,
-          last_status: null as any,
-          run_count: 0,
-        };
+        const topic = args.topic;
+        const channelId = args.channel_id;
+        const fastMode = args.fast === true;
 
-        const result = await executeAiArticle(tempTask as any, env);
-        return { content: [{ type: "text", text: `${bold("📝 Artikel Terkirim!")}\n${divider()}\n${result}` }] };
+        // ═══ RESEARCH ═══
+        let research = { summary: "Gunakan pengetahuan umum.", reviewSummary: "" };
+        try {
+          research = await researchArticle(topic, env);
+        } catch (e: any) {
+          console.warn(`⚠️ MCP Research gagal: ${e.message}`);
+        }
+
+        // ═══ AI GENERATE (3 attempts + fallback) ═══
+        let article: any;
+        try {
+          article = await generateArticle(topic, research, env);
+        } catch (e: any) {
+          console.error(`❌ MCP AI article gagal: ${e.message}`);
+          article = generateFallbackArticle(topic);
+        }
+
+        // ═══ PUBLISH ═══
+        (globalThis as any).__LUMINA_ENV__ = env;
+        const pubResult = await publishArticle(token, channelId, article, { faster: fastMode });
+
+        if (!pubResult.success) {
+          return { content: [{ type: "text", text: `❌ Artikel gagal dikirim: ${pubResult.error}` }] };
+        }
+
+        const headlineTitle = article.title || `📰 ${topic}`;
+        const summary = `✅ "${headlineTitle.slice(0, 60)}..." → ${pubResult.sectionsPublished} section${pubResult.imagesPublished > 0 ? ` • ${pubResult.imagesPublished} gambar` : ""}${pubResult.videosPublished > 0 ? ` • ${pubResult.videosPublished} video` : ""}`;
+
+        return { content: [{ type: "text", text: `${bold("📝 Artikel Terkirim!")}\n${divider()}\n${summary}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
+      }
+    },
+  },
+  // ─── VIDEO SEARCH TOOL ───────────────────────────────────
+  {
+    name: "video-search",
+    description: "Cari video YouTube paling relevan dengan scoring multi-source (DDG + Invidious + optional YT API). Validasi URL otomatis — anti-halusinasi! Cocok untuk cari trailer/PV anime.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Kata kunci video (contoh: 'Jujutsu Kaisen Season 3 trailer', 'Dorohedoro Season 3 PV')" },
+        minScore: { type: "number", description: "Minimum match score (0-100, default 50)", default: 50 },
+      },
+      required: ["query"],
+    },
+    handler: async ({ query, minScore }) => {
+      try {
+        const env = getEnv();
+        const result = await searchYouTubeVideo(query, {
+          env,
+          minScore: minScore || 50,
+          requireValidation: true,
+        });
+
+        if (!result) {
+          return { content: [{ type: "text", text: `❌ Tidak ditemukan video YouTube untuk: ${inlineCode(query)}` }] };
+        }
+
+        // Dapatkan detail tambahan dari video ID
+        const vidMatch = result.url.match(/v=([a-zA-Z0-9_-]{11})/);
+        const videoId = vidMatch ? vidMatch[1] : "?";
+        const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+        let sourceEmoji = "🟦";
+        if (result.source.includes("Invidious")) sourceEmoji = "🟪";
+        else if (result.source.includes("Google")) sourceEmoji = "🟩";
+        else if (result.source.includes("YouTube API")) sourceEmoji = "🟥";
+
+        return {
+          content: [{
+            type: "text",
+            text: `${bold("🎬 Video Search:")} ${inlineCode(query)}\n${divider()}\n` +
+              `${sourceEmoji} **Judul:** ${result.title}\n` +
+              `🔗 **URL:** ${result.url}\n` +
+              `📊 **Score:** ${result.score}/100\n` +
+              `📡 **Source:** ${result.source}\n` +
+              `🖼️ **Thumbnail:** ${thumbnailUrl}\n` +
+              `${result.score >= 70 ? "✅ Sangat relevan" : result.score >= 50 ? "⚠️ Cukup relevan" : "❌ Kurang relevan"}`,
+          }],
+        };
       } catch (e: any) {
         return { content: [{ type: "text", text: `❌ Error: ${e.message}` }] };
       }

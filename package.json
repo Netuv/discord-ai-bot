@@ -12,12 +12,15 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
     "@types/node": "^25.9.3",
+    "ts-language-mcp": "^1.2.0",
+    "ts-mcp-server": "^1.1.1",
     "typescript": "^5.5.2",
     "vitest": "~3.2.0",
     "wrangler": "^4.102.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "discord-interactions": "^4.4.0"
+    "discord-interactions": "^4.4.0",
+    "mcp-proxy": "^6.5.2"
   }
 }

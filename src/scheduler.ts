@@ -14,6 +14,9 @@
 import { AiRouter } from "./ai-router";
 import { WebScout } from "./web-scout";
 import { searchAnimeImage, downloadImage } from "./image-scraper";
+import { findYouTubeVideo as videoScraperFindVideo } from "./video-scraper";
+import { researchArticle, generateArticle, parseArticleJSON, buildArticlePrompt, getArticleColor, generateFallbackArticle } from "./article-writer";
+import { publishArticle } from "./article-publisher";
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -412,36 +415,17 @@ async function executeUpdateStatus(
 }
 
 // ─── Web Research ─────────────────────────────────────────
-// ─── Web Research — Fast mode (skip scrape, search snippets only) ──
-// researchForArticle() scrape 3 URL = SLOW (~15-30 detik)
-// Search snippets sudah cukup untuk AI nulis artikel (~3-5 detik)
+// ─── Web Research — Berita + Review Multi-Sumber ────────────
+// v4.0: Gak cuma berita, tapi juga review & opini dari berbagai platform!
+// WebScout search snippets + scrape review untuk AI summary
 
-async function webResearch(topic: string, env: any): Promise<{ news: any[]; summary: string }> {
-  try {
-    const webScout = new WebScout(env);
-
-    // Parallel search semua source (DuckDuckGo + Wikipedia + HN) — ~3 detik
-    const results = await webScout.search(topic, { maxResults: 8, useCache: true });
-
-    // Langsung pakai snippet — TIDAK PERLU scrape, AI cukup dari title+snippet
-    const summaryLines = results.map((r, i) =>
-      `${i + 1}. [${r.source}] ${r.title}${r.snippet ? ` — ${r.snippet.slice(0, 120)}` : ""}`
-    );
-
-    const summary = summaryLines.length > 0
-      ? `📰 **Hasil Riset Web:**\n${summaryLines.join("\n")}`
-      : "📰 Gunakan pengetahuan umum.";
-
-    return { news: results, summary };
-  } catch (e: any) {
-    console.warn(`⚠️ WebScout gagal: ${e.message}`);
-    return { news: [], summary: "📰 Gunakan pengetahuan umum." };
-  }
-}
-
-// ─── AI Article System v2.1 — Plain Text + Video Links ────
-// Flow: Headline → [Image + Text + Video?] per topic → Closing
-// TANPA EMBED — plain text markdown. Discord auto-embed YouTube/Pixiv links.
+// ─── Artikel System — MODULAR (v4.1) ──────────────────────
+// Research  → article-writer.ts (researchArticle)
+// Generate  → article-writer.ts (generateArticle + generateFallbackArticle)
+// Publish   → article-publisher.ts (publishArticle)
+//
+// executeAiArticle adalah satu-satunya entry point yang dipanggil
+// dari scheduler dan MCP handler.
 
 export async function executeAiArticle(
   task: ScheduledTask,
@@ -452,234 +436,51 @@ export async function executeAiArticle(
   const topic = task.params.topic || task.params.prompt || "berita anime/manga/game terkini";
   const channelId = task.channel_id;
 
-  // ═══ STEP 1: RESEARCH (fast — snippets only) ═══════════
-  let summary = "Gunakan pengetahuan umum.";
+  // ═══ STEP 1: RESEARCH via article-writer ════════════════
+  let research = { summary: "Gunakan pengetahuan umum.", reviewSummary: "" };
   try {
-    const { summary: s } = await webResearch(topic, env);
-    summary = s;
-  } catch {}
+    research = await researchArticle(topic, env);
+    console.log(`✅ Research selesai: ${research.summary.slice(0, 100)}...`);
+  } catch (e: any) {
+    console.warn(`⚠️ Research gagal (lanjut tanpa data): ${e.message}`);
+  }
 
-  // ═══ STEP 2: AI GENERATE ═══════════════════════════════
+  // ═══ STEP 2: AI GENERATE via article-writer ════════════
+  // Ada 3 attempt + 1 fallback hardcoded
   let article: any;
   try {
-    const prompt = buildArticlePrompt(topic, summary);
-    const raw = await new AiRouter(env).chat([{ role: "user", content: prompt }]);
-    const rawStr = typeof raw === "string" ? raw : JSON.stringify(raw);
-    article = parseArticleJSON(rawStr);
+    article = await generateArticle(topic, research, env);
   } catch (e: any) {
-    console.error(`❌ [ai-article] Gagal: ${e.message}`);
-    return "⚠️ Artikel gagal dihasilkan untuk topik ini";
+    console.error(`❌ [ai-article] Semua attempt gagal: ${e.message}`);
+    article = generateFallbackArticle(topic);
   }
 
-  // ═══ STEP 3: Kirim HEADLINE ════════════════════════════
-  await sendMsg(token, channelId, `## ${article.title || `📰 ${topic}`}`);
+  // ═══ STEP 3-4: PUBLISH ke Discord via article-publisher ══
+  // Set env global utk dipake publisher (video & image search)
+  (globalThis as any).__LUMINA_ENV__ = env;
 
-  // ═══ STEP 4: Per-section → [Gambar] + [Teks] + [Video?] ═
-  const sections = article.sections || article.topics || [];
-  let imageCount = 0;
-  let videoCount = 0;
+  const pubResult = await publishArticle(token, channelId, article);
 
-  for (const t of sections) {
-    if (!t.heading && !t.body) continue;
-
-    // ── Cari gambar dari image_query ──
-    if (t.image_query && t.image_query.length > 1) {
-      try {
-        const img = await searchAnimeImage(t.image_query, { env });
-        if (img) {
-          const ok = await sendImageToDiscord(token, channelId, img.url, `${t.heading || "📸"} — ${img.source}`);
-          if (ok) imageCount++;
-        }
-      } catch {}
-    }
-
-    // ── Kirim teks topic (plain text markdown) ──
-    const body = t.body?.slice(0, 1900) || "";
-    await sendMsg(token, channelId, `**${t.heading || "📖"}**\n\n${body}`);
-
-    // ── Cari video (PV/Trailer/YouTube) ──
-    if (t.video_query && t.video_query.length > 3) {
-      try {
-        const videoUrl = await findYouTubeVideo(t.video_query, env);
-        if (videoUrl) {
-          await sendMsg(token, channelId, `🎬 **Video:** ${videoUrl}`);
-          videoCount++;
-        }
-      } catch {}
-    }
+  if (!pubResult.success) {
+    return `⚠️ Artikel gagal dikirim: ${pubResult.error}`;
   }
 
-  // ═══ STEP 5: Kirim CLOSING ═════════════════════════════
-  if (article.closing) {
-    await sendMsg(token, channelId, `---\n${article.closing.slice(0, 1900)}`);
-  }
-
-  return `✅ "${(article.title || topic).slice(0, 80)}..." → ${sections.length} section${imageCount > 0 ? ` • ${imageCount} gambar` : ""}${videoCount > 0 ? ` • ${videoCount} video` : ""}`;
-}
-
-// ─── Helpers ──────────────────────────────────────────────
-
-/** Kirim pesan teks biasa ke Discord (tanpa embed) */
-async function sendMsg(token: string, chId: string, content: string): Promise<void> {
-  try {
-    await fetch(`https://discord.com/api/v10/channels/${chId}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ content: content.slice(0, 2000) }),
-    });
-  } catch {}
-}
-
-/** Kirim gambar ke Discord via image-scraper + downloadImage */
-async function sendImageToDiscord(
-  token: string, chId: string, imageUrl: string, caption: string
-): Promise<boolean> {
-  try {
-    const img = await downloadImage(imageUrl);
-    if (!img) return false;
-
-    const form = new FormData();
-    form.append("file", new Blob([img.buffer], { type: img.mimeType }), `article-${Date.now()}.jpg`);
-    form.append("content", caption.slice(0, 200));
-
-    const res = await fetch(`https://discord.com/api/v10/channels/${chId}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bot ${token}` },
-      body: form,
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-/** Build AI prompt — per-topic dengan video_query */
-function buildArticlePrompt(topic: string, summary: string): string {
-  return (
-    `Kamu adalah jurnalis anime/manga/game dengan gaya ngobrol santai. Buat artikel dari data berita REAL.\n` +
-    `\n` +
-    `## TOPIK: ${topic}\n` +
-    `## DATA BERITA TERKINI:\n${summary}\n` +
-    `\n` +
-    `## TUGAS:\n` +
-    `Buat artikel dengan format JSON. Pilih 2-3 topik berbeda.\n` +
-    `BALAS HANYA JSON ini, JANGAN tambah teks lain:\n` +
-    `\n` +
-    `{\n` +
-    `  "title": "[Emoji] Headline max 100 karakter",\n` +
-    `  "intro": "Hook 2-3 kalimat — bikin penasaran!",\n` +
-    `  "sections": [\n` +
-    `    {\n` +
-    `      "heading": "🔍 [Sub-judul]",\n` +
-    `      "body": "Paragraf NARASI 4-6 kalimat. Gaya santai, bukan poin-poin!",\n` +
-    `      "image_query": "Judul SPESIFIK untuk gambar (kosongkan jika tidak relevan)",\n` +
-    `      "video_query": "Kata kunci YouTube/PV/trailer (kosongkan jika tidak ada video)"\n` +
-    `    },\n` +
-    `    {\n` +
-    `      "heading": "💡 [Sub-judul ke-2]",\n` +
-    `      "body": "Paragraf NARASI 4-6 kalimat.",\n` +
-    `      "image_query": "",\n` +
-    `      "video_query": ""\n` +
-    `    }\n` +
-    `  ],\n` +
-    `  "closing": "Penutup 2-3 kalimat + ajakan.",\n` +
-    `  "category": "anime/manga/game/breaking/announcement/general"\n` +
-    `}\n` +
-    `\n` +
-    `## GAYA BAHASA (WAJIB):\n` +
-    `- 🎯 Kasual & Akrab: "aku-kamu", kayak ngobrol di Discord\n` +
-    `- 📝 Paragraf Pendek: max 2-3 kalimat per paragraf\n` +
-    `- 🔥 Hook Kuat: pertanyaan relatable atau fakta unik\n` +
-    `- 🌊 Transisi Mulus: "Nah...", "Bayangin deh...", "Tapi tunggu dulu..."\n` +
-    `- 📖 Storytelling: ceritakan dengan alur, bukan cuma fakta\n` +
-    `- 🚫 DILARANG: "Kesimpulannya", "Dapat disimpulkan", "Penting untuk diingat"\n` +
-    `- 😊 Kasih emosi: bikin tertawa, penasaran, atau terharu\n` +
-    `- 🎨 Sesekali metafora: "Season ini kayak buffet all-you-can-eat..."\n` +
-    `- ❌ NO bullet list, NO poin-poin di body\n` +
-    `- ❌ NO ![...](url) markdown image di JSON\n` +
-    `- image_query: judul SPESIFIK (contoh: "Jujutsu Kaisen")\n` +
-    `- video_query: judul SPESIFIK YouTube (contoh: "Jujutsu Kaisen Season 3 trailer")\n` +
-    `- Baca berita REAL, jangan ngarang fakta\n` +
-    `\n` +
-    `## CONTOH PARAGRAF:\n` +
-    `"Kamu tau gak sih, summer 2026 bakal jadi salah satu season paling gila dalam sejarah anime! Aku udah liat lineup-nya dan jujur — ini gila banget. Crunchyroll baru aja ngumumin daftar lengkapnya, dan ada beberapa judul yang langsung bikin aku tepuk jidat."\n` +
-    `\n` +
-    `"Nah, yang paling bikin heboh tentu aja return-nya serial favorit yang udah ditunggu dari jaman kuliah. Bayangin deh, ada yang sempet vakum 3 tahun lebih, tiba-tiba muncul lagi dengan trailer yang bikin merinding."`
-  );
-}
-
-/** Parse article JSON dari AI response — robust */
-function parseArticleJSON(raw: string): any {
-  let cleaned = raw
-    .replace(/!\[.*?\]\(.*?\)/g, "")
-    .replace(/[\u0000-\u001F\u007F]/g, "")
-    .trim();
-
-  try {
-    const m = cleaned.match(/\{[\s\S]*\}/);
-    if (m) return JSON.parse(m[0]);
-  } catch {}
-
-  try {
-    const r = cleaned.replace(/https?:\/\/[^\s,"}\]]+/g, "[link]");
-    const m = r.match(/\{[\s\S]*\}/);
-    if (m) return JSON.parse(m[0]);
-  } catch {}
-
-  throw new Error("AI gagal generate artikel valid");
-}
-
-/** Get color hex dari category */
-function getArticleColor(cat: string): number {
-  const colors: Record<string, number> = {
-    anime: 0xFF6B6B, manga: 0x9B59B6, game: 0x3498DB,
-    breaking: 0xE74C3C, announcement: 0xF39C12, general: 0x5865F2,
-  };
-  return colors[cat] || 0x5865F2;
+  const headlineTitle = article.title || `📰 ${topic}`;
+  return `✅ "${headlineTitle.slice(0, 60)}..." → ${pubResult.sectionsPublished} section${pubResult.imagesPublished > 0 ? ` • ${pubResult.imagesPublished} gambar` : ""}${pubResult.videosPublished > 0 ? ` • ${pubResult.videosPublished} video` : ""}`;
 }
 
 /**
- * Cari video YouTube via DuckDuckGo.
+ * Cari video YouTube via VideoScraper (multi-source + scoring + validasi).
+ * Fungsi ini DIGANTI oleh video-scraper.ts yang lebih akurat.
  * Discord auto-embed YouTube links → muncul thumbnail + tombol play.
- * Return: "https://www.youtube.com/watch?v=XXXX" atau null
- *
- * Scoring:
- * - Query match title ≥ 70 → return URL
- * - Query match title < 70 → skip
- * - Gak ada result → return null
+ * 
+ * Note: Implementasi lama pindah ke src/video-scraper.ts dengan:
+ * - Multi-source parallel (DDG + Invidious + YT API + Google)
+ * - Token-based scoring (0-100)
+ * - Validasi URL via oEmbed/HEAD
+ * - Cache KV 1 jam
+ * - Fallback query
  */
-async function findYouTubeVideo(query: string, env: any): Promise<string | null> {
-  try {
-    const res = await fetch(
-      `https://api.duckduckgo.com/?q=${encodeURIComponent(query + " youtube trailer video")}&format=json&no_html=1&iax=videos`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) return null;
-    const data: any = await res.json();
-
-    // Cari dari Related Topics (YouTube links)
-    const relatedTopics: any[] = data.RelatedTopics || [];
-    for (const topic of relatedTopics) {
-      if (topic.Text && topic.FirstURL && topic.FirstURL.includes("youtube.com")) {
-        // Score: cek query match
-        const tLower = topic.Text.toLowerCase();
-        const qLower = query.toLowerCase();
-        if (tLower.includes(qLower) || qLower.includes(tLower.split(" - ")[0].trim().toLowerCase())) {
-          return topic.FirstURL;
-        }
-      }
-    }
-
-    // Cari dari Infobox atau Abstract
-    if (data.AbstractURL && data.AbstractURL.includes("youtube.com")) {
-      return data.AbstractURL;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 async function executeGithubRun(
   task: ScheduledTask,
