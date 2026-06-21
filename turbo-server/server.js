@@ -2,7 +2,7 @@
  * 🚀 Turbo Layer — Heavy AI Processing Server
  * 
  * Multi-provider AI server untuk Discord AI Bot.
- * Priority: OpenRouter → NVIDIA → Cloudflare AI (fallback)
+ * Priority: OpenRouter → NVIDIA → OpenCode → Cloudflare AI (fallback)
  * 
  * Endpoints:
  *   GET  /health           — Health check
@@ -27,13 +27,14 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || '';
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '';
 const CLOUDFLARE_AI_TOKEN = process.env.CLOUDFLARE_AI_TOKEN || '';
+const OPENCODE_API_KEY = process.env.OPENCODE_API_KEY || '';
 
 const AI_TIMEOUT = 45000; // 45 detik per provider
 
 // ─── AI Multi-Provider Call ────────────────────────────────
 
 /**
- * Coba OpenRouter → NVIDIA → Cloudflare AI.
+ * Coba OpenRouter → NVIDIA → OpenCode → Cloudflare AI.
  * Return { content } atau null.
  */
 async function callAI(messages, model) {
@@ -57,7 +58,17 @@ async function callAI(messages, model) {
     }
   }
 
-  // Priority 3: Cloudflare AI (via REST API)
+  // Priority 3: OpenCode
+  if (OPENCODE_API_KEY) {
+    try {
+      const content = await callOpenCode(messages, model);
+      if (content) return { content, provider: 'opencode' };
+    } catch (e) {
+      console.warn(`[Turbo] OpenCode gagal: ${e.message}`);
+    }
+  }
+
+  // Priority 4: Cloudflare AI (via REST API)
   if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) {
     try {
       const content = await callCloudflareAI(messages, model);
@@ -127,6 +138,35 @@ async function callNVIDIA(messages, customModel) {
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('NVIDIA: respons kosong');
+  return content;
+}
+
+async function callOpenCode(messages, customModel) {
+  const model = customModel || 'gpt-4o';
+  const body = {
+    model,
+    messages,
+    max_tokens: 4096,
+  };
+
+  const res = await fetch('https://opencode.ai/zen/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENCODE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(AI_TIMEOUT),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => 'unknown');
+    throw new Error(`OpenCode ${res.status}: ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('OpenCode: respons kosong');
   return content;
 }
 
@@ -286,6 +326,7 @@ app.get('/health', function(req, res) {
   if (OPENROUTER_API_KEY) providers.push('openrouter');
   if (NVIDIA_API_KEY) providers.push('nvidia');
   if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('cloudflare');
+  if (OPENCODE_API_KEY) providers.push('opencode');
 
   res.json({
     status: 'ok',
@@ -313,6 +354,7 @@ app.post('/ai/chat', async function(req, res) {
         providers: {
           openrouter: !!OPENROUTER_API_KEY,
           nvidia: !!NVIDIA_API_KEY,
+          opencode: !!OPENCODE_API_KEY,
           cloudflare: !!(CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID),
         },
       });
@@ -491,6 +533,7 @@ if (!isVercel) {
     const providers = [];
     if (OPENROUTER_API_KEY) providers.push('OpenRouter');
     if (NVIDIA_API_KEY) providers.push('NVIDIA');
+    if (OPENCODE_API_KEY) providers.push('OpenCode');
     if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('Cloudflare AI');
 
     console.log(`🚀 Turbo Layer running on port ${PORT}`);
