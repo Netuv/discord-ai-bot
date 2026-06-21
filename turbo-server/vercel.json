@@ -1,0 +1,29 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "name": "discord-turbo-layer",
+  "builds": [
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/health",
+      "dest": "api/index.js"
+    },
+    {
+      "src": "/ai/chat",
+      "dest": "api/index.js"
+    },
+    {
+      "src": "/article/heavy",
+      "dest": "api/index.js"
+    },
+    {
+      "src": "/discord/followup",
+      "dest": "api/index.js"
+    }
+  ]
+}

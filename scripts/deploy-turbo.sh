@@ -1,14 +1,13 @@
 #!/bin/bash
-# 🚀 Hybrid Turbo Layer — Deployment Script (Koyeb)
+# 🚀 Hybrid Turbo Layer — Deployment Script (Vercel)
 # Jalanin dari laptop kamu setelah Turbo Layer siap!
 #
 # Cara pakai:
-#   1. ./scripts/deploy-turbo.sh koyeb-install   — Install Koyeb CLI
-#   2. ./scripts/deploy-turbo.sh koyeb-deploy    — Deploy via Koyeb CLI
-#   3. ./scripts/deploy-turbo.sh secret <url>    — Set Cloudflare secrets
-#   4. ./scripts/deploy-turbo.sh worker           — Deploy Cloudflare Worker
-#   5. ./scripts/deploy-turbo.sh guide            — Tampilkan panduan lengkap
-#   6. ./scripts/deploy-turbo.sh test <url>       — Test service
+#   1. ./scripts/deploy-turbo.sh vercel-deploy  — Deploy ke Vercel (via CLI)
+#   2. ./scripts/deploy-turbo.sh secret <url>   — Set Cloudflare secrets
+#   3. ./scripts/deploy-turbo.sh worker         — Deploy Cloudflare Worker
+#   4. ./scripts/deploy-turbo.sh test <url>     — Test service
+#   5. ./scripts/deploy-turbo.sh guide          — Panduan lengkap
 
 set -e
 
@@ -21,111 +20,75 @@ NC='\033[0m'
 
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   🚀 Hybrid Turbo Layer — Deployment Script (Koyeb) ║"
+echo "║   🚀 Hybrid Turbo Layer — Deployment Script (Vercel)║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
 # ════════════════════════════════════════════════════════════
-# FUNGSI: Install Koyeb CLI
+# FUNGSI: Deploy ke Vercel via CLI
 # ════════════════════════════════════════════════════════════
-install_koyeb_cli() {
-  echo -e "${BOLD}📦 Install Koyeb CLI${NC}"
+deploy_vercel() {
+  echo -e "${BOLD}📡 Langkah 1: Deploy ke Vercel${NC}"
   echo ""
 
-  if command -v koyeb &> /dev/null; then
-    echo "✅ Koyeb CLI sudah terinstall: $(koyeb version 2>/dev/null || echo 'ok')"
+  if ! command -v vercel &> /dev/null; then
+    echo "⬇️  Install Vercel CLI dulu..."
+    npm i -g vercel 2>/dev/null || npm install -g vercel
+  fi
+
+  if ! command -v vercel &> /dev/null; then
+    echo -e "${YELLOW}⚠️  Vercel CLI gak bisa diinstall. Manual aja:${NC}"
+    vercel_manual_guide
     return 0
   fi
 
-  echo "⬇️  Downloading Koyeb CLI..."
-  curl -fsSL https://cli.koyeb.com/install.sh | sh
+  echo "🚀 Deploy turbo-server ke Vercel..."
+  echo ""
+  echo -e "${YELLOW}📋 Pertama kali? Nanti bakal:${NC}"
+  echo "  1. Minta login via browser (buka linknya)"
+  echo "  2. Pilih scope (personal account)"
+  echo "  3. Konfirmasi setting"
+  echo ""
 
-  if command -v koyeb &> /dev/null; then
-    echo -e "${GREEN}✅ Koyeb CLI berhasil diinstall!${NC}"
-    echo ""
-    echo "🔐 Login dulu:"
-    echo "  koyeb login"
-    echo ""
-    echo "📋 Buka link yang muncul di browser, login, lalu paste token."
-  else
-    echo -e "${RED}❌ Gagal install. Coba manual: https://cli.koyeb.com/${NC}"
-  fi
+  cd turbo-server
+  vercel --prod
+  cd ..
+
+  echo ""
+  echo -e "${GREEN}✅ Deploy selesai!${NC}"
+  echo -e "${YELLOW}📝 Catet URL-nya, contoh: https://discord-turbo-layer.vercel.app${NC}"
+  echo ""
+  echo "📡 Lanjut set secret:"
+  echo "  ./scripts/deploy-turbo.sh secret https://discord-turbo-layer.vercel.app"
 }
 
 # ════════════════════════════════════════════════════════════
-# FUNGSI: Deploy ke Koyeb via CLI
+# FUNGSI: Panduan Manual Deploy via Web UI Vercel
 # ════════════════════════════════════════════════════════════
-deploy_koyeb() {
-  echo -e "${BOLD}📡 Langkah 1: Deploy ke Koyeb${NC}"
+vercel_manual_guide() {
   echo ""
-
-  if ! command -v koyeb &> /dev/null; then
-    echo -e "${YELLOW}⚠️  Koyeb CLI belum terinstall.${NC}"
-    echo "   Jalanin dulu: ./scripts/deploy-turbo.sh koyeb-install"
-    echo ""
-    echo -e "${BOLD}📋 Atau deploy manual via Web UI:${NC}"
-    koyeb_manual_guide
-    return 0
-  fi
-
-  # Cek login
-  if ! koyeb app list &> /dev/null; then
-    echo -e "${YELLOW}⚠️  Koyeb CLI belum login.${NC}"
-    echo "   Jalanin: koyeb login"
-    echo ""
-    koyeb_manual_guide
-    return 0
-  fi
-
-  echo "🚀 Deploying to Koyeb via CLI..."
+  echo -e "${BOLD}📋 Langkah Manual — Deploy via Web UI Vercel:${NC}"
   echo ""
-
-  koyeb app init discord-turbo-layer \
-    --git github.com/Netuv/discord-ai-bot \
-    --git-branch master \
-    --git-builder docker \
-    --ports 3000:http \
-    --routes /:3000
-
+  echo "  1️⃣  Buka https://vercel.com/"
+  echo "  2️⃣  Daftar pake GitHub — GRATIS, NO CREDIT CARD 🎉"
+  echo "  3️⃣  Klik 'Add New...' → 'Project'"
+  echo "  4️⃣  Import GitHub repo 'Netuv/discord-ai-bot'"
+  echo "  5️⃣  Konfigurasi:"
+  echo "      ╔══════════════════════════════════════════════╗"
+  echo "      ║ Root Directory:    turbo-server             ║"
+  echo "      ║ Framework Preset:  Other                    ║"
+  echo "      ║ Build Command:     (leave blank — auto)     ║"
+  echo "      ║ Output Dir:        (leave blank)            ║"
+  echo "      ╠══════════════════════════════════════════════╣"
+  echo "      ║ Environment Variables (optional):            ║"
+  echo "      ║ • OPENROUTER_API_KEY = <key dari OR>        ║"
+  echo "      ║ • NVIDIA_API_KEY     = <key dari NVIDIA>    ║"
+  echo "      ╚══════════════════════════════════════════════╝"
+  echo "  6️⃣  Klik 'Deploy'"
+  echo "  7️⃣  ⏳ Tunggu ~2 menit sampai status 'Ready'"
+  echo "  8️⃣  Catet URL: https://discord-turbo-layer.vercel.app"
   echo ""
-  echo -e "${GREEN}✅ App 'discord-turbo-layer' dibuat di Koyeb!${NC}"
-  echo ""
-  echo "⏳ Tunggu build selesai:"
-  echo "  koyeb service logs discord-turbo-layer/turbo-layer -t build"
-  echo ""
-  echo "📝 Cek URL setelah deploy:"
-  echo "  koyeb app get discord-turbo-layer"
-  echo ""
-  echo "📡 Setelah dapat URL, set secret:"
-  echo "  ./scripts/deploy-turbo.sh secret https://discord-turbo-layer-xxx.koyeb.app"
-}
-
-# ════════════════════════════════════════════════════════════
-# FUNGSI: Panduan Manual Deploy via Web UI Koyeb
-# ════════════════════════════════════════════════════════════
-koyeb_manual_guide() {
-  echo ""
-  echo -e "${BOLD}📋 Langkah Manual — Deploy via Web UI Koyeb:${NC}"
-  echo "  1️⃣  Buka https://app.koyeb.com/"
-  echo "  2️⃣  Daftar gratis — TIDAK PERLU CREDIT CARD! 🎉"
-  echo "  3️⃣  Klik 'Create Web Service'"
-  echo "  4️⃣  Pilih 'GitHub' sebagai deployment method"
-  echo "  5️⃣  Connect GitHub → pilih repo 'Netuv/discord-ai-bot'"
-  echo "  6️⃣  Isi konfigurasi:"
-  echo "      ┌─────────────────────────────────────────────┐"
-  echo "      │ Service Name:  discord-turbo-layer          │"
-  echo "      │ Builder:       Docker                       │"
-  echo "      │ Dockerfile:    turbo-server/Dockerfile     │"
-  echo "      │ Port:          3000                         │"
-  echo "      │ Instance:      Nano (Free)                  │"
-  echo "      │ Region:        Singapore / Frankfurt        │"
-  echo "      └─────────────────────────────────────────────┘"
-  echo "  7️⃣  (Optional) Set Environment Variables:"
-  echo "      • OPENROUTER_API_KEY = <key dari openrouter.ai>"
-  echo "      • NVIDIA_API_KEY = <key dari build.nvidia.com>"
-  echo "  8️⃣  Klik 'Deploy'"
-  echo "  9️⃣  ⏳ Tunggu 2-3 menit sampai status 'Healthy'"
-  echo "  🔟  Catet URL: https://discord-turbo-layer-xxx.koyeb.app"
+  echo -e "${YELLOW}💡 VERCEL AUTO-DETECTS: Dia baca vercel.json & api/index.js otomatis!${NC}"
   echo ""
 }
 
@@ -139,7 +102,7 @@ set_secret() {
   if [ -z "$1" ]; then
     echo -e "${YELLOW}⚠️  Masukkan URL Turbo Layer service kamu.${NC}"
     echo ""
-    echo -e "${YELLOW}   Contoh URL Koyeb: https://discord-turbo-layer-xxx.koyeb.app${NC}"
+    echo -e "${YELLOW}   Contoh: https://discord-turbo-layer.vercel.app${NC}"
     echo ""
     read -p "   Masukkan URL: " TURBO_URL
   else
@@ -148,7 +111,7 @@ set_secret() {
 
   if [ -z "$TURBO_URL" ]; then
     echo -e "${RED}❌ URL diperlukan. Nanti jalanin:${NC}"
-    echo -e "${YELLOW}   ./scripts/deploy-turbo.sh secret https://url-kamu.koyeb.app${NC}"
+    echo -e "${YELLOW}   ./scripts/deploy-turbo.sh secret https://url-kamu.vercel.app${NC}"
     return 1
   fi
 
@@ -239,7 +202,7 @@ test_service() {
   if [ "$HTTP_CODE" = "200" ]; then
     echo -e "${GREEN}✨ Turbo Layer siap digunakan!${NC}"
   else
-    echo -e "${YELLOW}ℹ️  Set API key di dashboard Koyeb untuk aktifkan AI.${NC}"
+    echo -e "${YELLOW}ℹ️  Set API key di dashboard Vercel untuk aktifkan AI.${NC}"
     echo -e "${YELLOW}   Tapi service tetap bisa dipake — fallback ke Worker.${NC}"
   fi
 }
@@ -248,57 +211,52 @@ test_service() {
 # FUNGSI: Tampilkan Guide Lengkap
 # ════════════════════════════════════════════════════════════
 show_guide() {
-  echo -e "${BOLD}📖 HYBRID TURBO LAYER — DEPLOYMENT GUIDE (KOYEB)${NC}"
+  echo -e "${BOLD}📖 HYBRID TURBO LAYER — DEPLOYMENT GUIDE (VERCEL)${NC}"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
   echo ""
   echo -e "${BOLD}📋 Prasyarat:${NC}"
-  echo "  ✅ Kode sudah di-push ke GitHub"
-  echo "  ✅ Akun Koyeb (app.koyeb.com) — GRATIS, NO CC 🎉"
+  echo "  ✅ Kode sudah di-push ke GitHub ✅"
+  echo "  ✅ Akun Vercel (vercel.com) — GRATIS, NO CC 🎉"
   echo "  ✅ Akun Cloudflare dengan Workers"
   echo "  ✅ wrangler sudah login (npx wrangler login)"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
   echo ""
-  echo -e "${BOLD}📡 STEP 1: Deploy ke Koyeb${NC}"
+  echo -e "${BOLD}📡 STEP 1: Deploy ke Vercel${NC}"
   echo ""
-  echo "  🅰️  Via Web UI (termudah — recommended):"
+  echo "  🅰️  Via Web UI (termudah — recommended ✅):"
   echo ""
-  echo "  1️⃣  Buka https://app.koyeb.com/"
-  echo "  2️⃣  Daftar gratis (Google/GitHub login) — NO CREDIT CARD"
-  echo "  3️⃣  Klik 'Create Web Service'"
-  echo "  4️⃣  Pilih 'GitHub' → 'Connect GitHub'"
-  echo "  5️⃣  Grant akses → pilih repo 'Netuv/discord-ai-bot'"
-  echo "  6️⃣  Isi konfigurasi:"
-  echo "      ┌─────────────────────────────────────────────┐"
-  echo "      │ Service Name:  discord-turbo-layer          │"
-  echo "      │ Builder:       Docker                       │"
-  echo "      │ Dockerfile:    turbo-server/Dockerfile     │"
-  echo "      │ Port:          3000                         │"
-  echo "      │ Instance:      Nano (Free ✓)                │"
-  echo "      │ Region:        Singapore (paling dekat)     │"
-  echo "      └─────────────────────────────────────────────┘"
-  echo "  7️⃣  (Optional) Environment Variables — scroll ke bawah:"
-  echo "      • OPENROUTER_API_KEY = <key dari openrouter.ai>"
-  echo "      • NVIDIA_API_KEY = <key dari build.nvidia.com>"
-  echo "  8️⃣  Klik 'Deploy'"
-  echo "  9️⃣  ⏳ Tunggu 2-3 menit sampai status 'Healthy'"
-  echo "  🔟  Copy URL: https://discord-turbo-layer-xxx.koyeb.app"
+  echo "  1️⃣  Buka https://vercel.com/"
+  echo "  2️⃣  Login pake GitHub — GRATIS, NO CREDIT CARD 🎉"
+  echo "  3️⃣  Klik 'Add New...' → 'Project'"
+  echo "  4️⃣  Import 'Netuv/discord-ai-bot' dari GitHub"
+  echo "  5️⃣  Konfigurasi:"
+  echo "      ╔══════════════════════════════════════════════╗"
+  echo "      ║ Root Directory:  turbo-server               ║"
+  echo "      ║ Framework:       Other                      ║"
+  echo "      ║ Build:           (default — auto)           ║"
+  echo "      ╠══════════════════════════════════════════════╣"
+  echo "      ║ ENV VARIABLES (opsional):                    ║"
+  echo "      ║ • OPENROUTER_API_KEY = <key dari OR>        ║"
+  echo "      ║ • NVIDIA_API_KEY     = <key dari NVIDIA>    ║"
+  echo "      ╚══════════════════════════════════════════════╝"
+  echo "  6️⃣  Klik 'Deploy'"
+  echo "  7️⃣  ⏳ Tunggu ~2 menit sampai 'Ready'"
+  echo "  8️⃣  Copy URL: https://discord-turbo-layer.vercel.app"
   echo ""
   echo -e "  ${CYAN}Atau via CLI:${NC}"
-  echo "  ./scripts/deploy-turbo.sh koyeb-install  # Install CLI"
-  echo "  koyeb login                                # Login"
-  echo "  ./scripts/deploy-turbo.sh koyeb-deploy    # Deploy"
+  echo "  ./scripts/deploy-turbo.sh vercel-deploy"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
   echo ""
   echo -e "${BOLD}🔐 STEP 2: Set Cloudflare Secret${NC}"
   echo ""
   echo "  npx wrangler secret put TURBO_SERVICE_URL"
-  echo "  # Paste URL dari Koyeb: https://discord-turbo-layer-xxx.koyeb.app"
+  echo "  # Paste: https://discord-turbo-layer.vercel.app"
   echo ""
-  echo "  Atau pake script:"
-  echo "  ./scripts/deploy-turbo.sh secret https://discord-turbo-layer-xxx.koyeb.app"
+  echo "  Atau:"
+  echo "  ./scripts/deploy-turbo.sh secret https://discord-turbo-layer.vercel.app"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
   echo ""
@@ -314,47 +272,42 @@ show_guide() {
   echo -e "${BOLD}🧪 STEP 4: Testing${NC}"
   echo ""
   echo "  1️⃣  Test health:"
-  echo "      curl https://discord-turbo-layer-xxx.koyeb.app/health"
-  echo "      ./scripts/deploy-turbo.sh test https://discord-turbo-layer-xxx.koyeb.app"
+  echo "      curl https://discord-turbo-layer.vercel.app/health"
+  echo "      ./scripts/deploy-turbo.sh test https://discord-turbo-layer.vercel.app"
   echo ""
   echo "  2️⃣  Test /ask di Discord:"
-  echo "      /ask Halo! — harus loading dulu, lalu jawaban masuk"
+  echo "      /ask Halo! — loading dulu → jawaban masuk"
   echo ""
   echo "  3️⃣  Test prompt panjang (200+ kata):"
-  echo "      /ask [prompt panjang] — loading, lalu jawaban dari Koyeb"
+  echo "      /ask [prompt panjang] — loading → jawaban dari Vercel"
   echo ""
-  echo "  4️⃣  Test failover (matikan Koyeb):"
-  echo "      Stop service di dashboard Koyeb"
-  echo "      /ask Halo — bot harus tetap jawab via Worker fallback"
+  echo "  4️⃣  Test failover (Vercel mati):"
+  echo "      Hapus secret TURBO_SERVICE_URL"
+  echo "      /ask Halo — bot tetap jawab via Worker fallback"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
   echo ""
   echo -e "${BOLD}📊 Monitoring${NC}"
   echo ""
-  echo "  • Koyeb logs: https://app.koyeb.com → Services → discord-turbo-layer → Logs"
-  echo "  • Worker logs: https://dash.cloudflare.com → Workers & Pages → discord-ai-bot"
-  echo "  • Cron logs: via /cron/logs endpoint"
+  echo "  • Vercel: https://vercel.com → dashboard → discord-turbo-layer"
+  echo "  • Worker: https://dash.cloudflare.com → Workers → discord-ai-bot"
   echo ""
   echo -e "${BOLD}⛔ Rollback${NC}"
   echo ""
-  echo "  Kalau ada masalah — hapus secret, Worker tetap jalan normal:"
   echo "  npx wrangler secret delete TURBO_SERVICE_URL"
-  echo "  npx wrangler deploy  # deploy ulang tanpa Turbo Layer"
+  echo "  npx wrangler deploy  # Worker jalan normal tanpa Turbo"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
   echo ""
-  echo -e "${GREEN}✨ Selesai! Turbo Layer siap bikin bot kamu makin responsif!${NC}"
+  echo -e "${GREEN}✨ Selesai! Turbo Layer siap bikin bot makin responsif!${NC}"
 }
 
 # ════════════════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════════════════
 case "${1:-guide}" in
-  koyeb-install|install)
-    install_koyeb_cli
-    ;;
-  koyeb-deploy|deploy)
-    deploy_koyeb
+  vercel-deploy)
+    deploy_vercel
     ;;
   secret)
     set_secret "$2"
@@ -366,14 +319,9 @@ case "${1:-guide}" in
     test_service "$2"
     ;;
   all)
-    echo -e "${BOLD}🚀 Hybrid Turbo Layer — Full Deployment${NC}"
-    echo "================================================"
-    echo ""
-    echo "Jalanin step by step pake guide ya:"
-    echo "  ./scripts/deploy-turbo.sh guide"
-    echo ""
-    echo "Atau manual:"
-    echo "  1. Deploy ke Koyeb (via Web UI atau CLI)"
+    echo -e "${BOLD}🚀 Full Deployment${NC}"
+    echo "Jalanin step by step:"
+    echo "  1. ./scripts/deploy-turbo.sh vercel-deploy"
     echo "  2. ./scripts/deploy-turbo.sh secret <url>"
     echo "  3. ./scripts/deploy-turbo.sh worker"
     ;;

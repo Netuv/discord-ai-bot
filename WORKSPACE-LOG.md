@@ -604,36 +604,33 @@ discord-ai-bot/
 | 9 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
 | 10 | Turbo server test (local) | ✅ Pass | Health 200, /ai/chat 503 (tanpa API key), /article/heavy fallback |
 
-#### 🔧 Cara Setup Koyeb (Lebih Gampang dari Render! 🎉)
+#### 🔧 Cara Setup Vercel (Gratis, NO CC! 🎉)
 1. Push kode ke GitHub ✅ (udah)
-2. Buka https://app.koyeb.com/ — Daftar gratis (Google/GitHub), **no credit card**
-3. Klik **Create Web Service** → pilih **GitHub** → connect repo `Netuv/discord-ai-bot`
-4. Set konfigurasi:
-   - **Builder:** Docker
-   - **Dockerfile:** `turbo-server/Dockerfile` (otomatis terdeteksi)
-   - **Port:** 3000
-   - **Instance:** Nano (Free)
-5. (Optional) Set Environment Variables:
+2. Buka https://vercel.com/
+3. Login pake GitHub — **GRATIS, NO CC**
+4. Klik **Add New...** → **Project**
+5. Import repo `Netuv/discord-ai-bot`
+6. Konfigurasi:
+   - **Root Directory:** `turbo-server`
+   - **Framework Preset:** Other (Vercel auto-detect vercel.json)
+   - **Build & Output:** default (kosongin aja)
+7. (Optional) Environment Variables:
    - `OPENROUTER_API_KEY` — Priority 1
    - `NVIDIA_API_KEY` — Priority 2
-6. Klik **Deploy** → tunggu 2-3 menit sampai **Healthy**
-7. Catet URL: `https://discord-turbo-layer-xxx.koyeb.app`
-8. Set Cloudflare secret:
-   ```bash
-   npx wrangler secret put TURBO_SERVICE_URL
-   # Paste URL dari Koyeb
-   npx wrangler deploy
-   ```
-9. Selesai! Test dengan:
-   ```bash
-   curl https://discord-turbo-layer-xxx.koyeb.app/health
-   ```
+8. Klik **Deploy** → ⏳ ~2 menit
+9. Catet URL: `https://discord-turbo-layer.vercel.app`
+10. Set Cloudflare secret:
+    ```bash
+    npx wrangler secret put TURBO_SERVICE_URL
+    # Paste: https://discord-turbo-layer.vercel.app
+    npx wrangler deploy
+    ```
 
 #### 🛡️ Garansi Keamanan
 - Kalau `TURBO_SERVICE_URL` gak di-set → Turbo Layer skip otomatis, bot jalan seperti biasa
 - Semua fungsi Turbo return `null` kalau gagal → TIDAK PERNAH throw
-- Kalau Koyeb mati → bot tetap 100% fungsional (fallback ke Worker)
-- Koyeb **tidak minta credit card** — cukup login Google/GitHub
+- Kalau Vercel mati → bot tetap 100% fungsional (fallback ke Worker)
+- Vercel Hobby **gratis selamanya, tanpa credit card**
 
 ---
 

@@ -478,15 +478,23 @@ function chunkText(text, maxLength) {
   return chunks;
 }
 
-// ─── Start Server ─────────────────────────────────────────
+// ─── Export for Vercel Serverless ─────────────────────────
+// Vercel butuh app di-export, bukan di-listen.
+// Di Vercel, serverless function handle request langsung.
+module.exports = app;
 
-app.listen(PORT, function() {
-  const providers = [];
-  if (OPENROUTER_API_KEY) providers.push('OpenRouter');
-  if (NVIDIA_API_KEY) providers.push('NVIDIA');
-  if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('Cloudflare AI');
+// ─── Start Server (Local / Docker only) ───────────────────
+// Kalau jalan langsung (bukan via Vercel), pake listen.
+const isVercel = process.env.VERCEL === '1';
+if (!isVercel) {
+  app.listen(PORT, function() {
+    const providers = [];
+    if (OPENROUTER_API_KEY) providers.push('OpenRouter');
+    if (NVIDIA_API_KEY) providers.push('NVIDIA');
+    if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('Cloudflare AI');
 
-  console.log(`🚀 Turbo Layer running on port ${PORT}`);
-  console.log(`📡 AI Providers: ${providers.length > 0 ? providers.join(' → ') : '⚠️  NONE (set env vars!)'}`);
-  console.log(`⏰ Started at ${new Date().toISOString()}`);
-});
+    console.log(`🚀 Turbo Layer running on port ${PORT}`);
+    console.log(`📡 AI Providers: ${providers.length > 0 ? providers.join(' → ') : '⚠️  NONE (set env vars!)'}`);
+    console.log(`⏰ Started at ${new Date().toISOString()}`);
+  });
+}
