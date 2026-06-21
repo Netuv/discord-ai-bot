@@ -571,66 +571,52 @@ discord-ai-bot/
 
 ### 21. 🚀 Hybrid Turbo Layer — Heavy AI Processing (2026-06-21)
 
-> **⚠️ CATATAN:** Wrangler tidak bisa deploy dari sandbox (butuh `wrangler login`).
-> Deploy dari laptop user dengan `npx wrangler deploy` setelah set Turbo URL.
-> Lihat `scripts/deploy-turbo.sh guide` untuk panduan lengkap.
->
-> **UPDATE:** Provider = **Koyeb** (gratis, tanpa credit card). Bukan Render.com.
-> Kode `turbo-server/` tetap sama — hanya deployment platform yang beda.
+> **🚨 Final Update 21 Juni 2026:** Semua "Render" → **"Turbo"** (provider-agnostic).
+> Provider hosting final = **Vercel Hobby** (gratis, NO CC ✅).
+> Kode server pake Express + serverless (api/index.js + vercel.json).
 
 #### 📋 Task Checklist
-- [x] **turbo-server/server.js** — Express server: `/health`, `/ai/chat`, `/article/heavy`, `/discord/followup`
-- [x] **turbo-server/package.json** — Dependencies (express + node-fetch v2)
-- [x] **turbo-server/Dockerfile** — Node.js 20 slim, production deploy
-- [x] **src/render-helper.ts** — NEW: HTTP client ke Turbo Layer (5 fungsi, silent fallback)
-- [x] **src/index.ts** — /ask handler: DEFERRED response (type 5) + background via ctx.waitUntil() + coba Turbo Layer dulu → fallback AiRouter
-- [x] **src/scheduler.ts** — executeAiArticle(): coba renderHeavyArticle() setelah STEP 2, override kalau valid
-- [x] **koyeb.yaml** — Blueprint untuk Koyeb deployment
-- [x] **scripts/deploy-turbo.sh** — Deployment script (Koyeb + Cloudflare)
-- [x] **npx tsc --noEmit** — Zero errors ✅
-- [x] **Turbo server test (local)** — Health ✅, /ai/chat ✅, /article/heavy ✅, /discord/followup ✅
+- [x] **turbo-server/server.js** — Express + 4 endpoint + conditional Vercel export
+- [x] **turbo-server/api/index.js** — Vercel serverless entry point
+- [x] **turbo-server/vercel.json** — Routing config
+- [x] **src/turbo-helper.ts** — HTTP client (5 fungsi: `turboChat`, `turboHeavyArticle`, dll)
+- [x] **src/index.ts** — /ask: DEFERRED + ctx.waitUntil() + coba Turbo → fallback AiRouter
+- [x] **src/scheduler.ts** — executeAiArticle: coba turboHeavyArticle() setelah STEP 2
+- [x] **scripts/deploy-turbo.sh** — Deployment script Vercel + Cloudflare
+- [x] **HYBRID-RENDER-PLAN.md → TURBO-LAYER-PLAN.md** — Renamed & updated
+- [x] **Vercel deploy** ✅ Live di `https://discord-turbo-layer.vercel.app`
+- [x] **Cloudflare secret TURBO_SERVICE_URL** ✅ Set
+- [x] **Worker deploy** ✅ 370 KiB, startup 9ms
+- [x] **TSC check** ✅ Zero errors
 
 #### ✅ After Deployment — Changes Verified & Deployed
 | # | File/Fitur | Status | Keterangan |
 |---|------------|--------|------------|
-| 1 | `turbo-server/server.js` | ✅ New | 492 baris — Express server 4 endpoint + multi-provider AI (OpenRouter→NVIDIA→Cloudflare) |
-| 2 | `turbo-server/package.json` | ✅ New | express ^4.18.2, node-fetch ^2.7.0 |
-| 3 | `turbo-server/Dockerfile` | ✅ New | node:20-slim, production npm ci |
-| 4 | `src/render-helper.ts` | ✅ New | 204 baris — 5 exported functions: `renderChat`, `renderHeavyArticle`, `renderDiscordFollowup`, `discordFollowupDirect`, `isRenderAlive` |
-| 5 | `src/index.ts` — /ask | ✅ Modified | DEFERRED response (type 5) + `ctx.waitUntil()` + coba Turbo → fallback AiRouter + PATCH webhook |
-| 6 | `src/scheduler.ts` — executeAiArticle | ✅ Modified | Coba `renderHeavyArticle()` setelah STEP 2, override artikel kalau valid |
-| 7 | `koyeb.yaml` | ✅ New | Koyeb blueprint — Docker builder, port 3000, Nano free |
-| 8 | `scripts/deploy-turbo.sh` | ✅ New | Full deployment script: Koyeb deploy, set secret, deploy worker, test |
-| 9 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
-| 10 | Turbo server test (local) | ✅ Pass | Health 200, /ai/chat 503 (tanpa API key), /article/heavy fallback |
+| 1 | `turbo-server/server.js` | ✅ Final | Express + Vercel export + 4 AI provider (OpenRouter→NVIDIA→OpenCode→Cloudflare) |
+| 2 | `turbo-server/api/index.js` | ✅ New | Vercel entry point, re-export app |
+| 3 | `turbo-server/vercel.json` | ✅ New | Route /health, /ai/chat, /article/heavy, /discord/followup |
+| 4 | `src/turbo-helper.ts` | ✅ Renamed | `render-helper.ts` → `turbo-helper.ts`, semua fungsi `renderX` → `turboX` |
+| 5 | `src/index.ts` — /ask | ✅ Modified | DEFERRED + ctx.waitUntil() + `turboChat()` → fallback |
+| 6 | `src/scheduler.ts` | ✅ Modified | `renderHeavyArticle` → `turboHeavyArticle()` |
+| 7 | `TURBO-LAYER-PLAN.md` | ✅ New | Plan provider-agnostic, ganti HYBRID-RENDER-PLAN.md |
+| 8 | `scripts/deploy-turbo.sh` | ✅ Updated | Vercel guide + secret + worker deploy |
+| 9 | `src/ai-router.ts` | ✅ Updated | OpenCode default model → `deepseek-v4-flash-free` |
+| 10 | `turbo-server/server.js` — OpenCode | ✅ Added | Priority 3 provider, model `deepseek-v4-flash-free` (FREE) |
 
-#### 🔧 Cara Setup Vercel (Gratis, NO CC! 🎉)
-1. Push kode ke GitHub ✅ (udah)
-2. Buka https://vercel.com/
-3. Login pake GitHub — **GRATIS, NO CC**
-4. Klik **Add New...** → **Project**
-5. Import repo `Netuv/discord-ai-bot`
-6. Konfigurasi:
-   - **Root Directory:** `turbo-server`
-   - **Framework Preset:** Other (Vercel auto-detect vercel.json)
-   - **Build & Output:** default (kosongin aja)
-7. (Optional) Environment Variables:
-   - `OPENROUTER_API_KEY` — Priority 1
-   - `NVIDIA_API_KEY` — Priority 2
-8. Klik **Deploy** → ⏳ ~2 menit
-9. Catet URL: `https://discord-turbo-layer.vercel.app`
-10. Set Cloudflare secret:
-    ```bash
-    npx wrangler secret put TURBO_SERVICE_URL
-    # Paste: https://discord-turbo-layer.vercel.app
-    npx wrangler deploy
-    ```
+#### 🚀 Deployment Final
+| Komponen | URL / Status |
+|----------|--------------|
+| **Vercel (Turbo Layer)** | `https://discord-turbo-layer.vercel.app` ✅ |
+| **Worker (Bot Utama)** | `https://discord-ai-bot.luminary-bot.workers.dev` ✅ |
+| **TURBO_SERVICE_URL** | `https://discord-turbo-layer.vercel.app` ✅ Set |
+| **Worker Startup** | 9ms ✅ |
+| **MCP Endpoint** | `https://discord-ai-bot.luminary-bot.workers.dev/mcp` |
 
 #### 🛡️ Garansi Keamanan
-- Kalau `TURBO_SERVICE_URL` gak di-set → Turbo Layer skip otomatis, bot jalan seperti biasa
-- Semua fungsi Turbo return `null` kalau gagal → TIDAK PERNAH throw
-- Kalau Vercel mati → bot tetap 100% fungsional (fallback ke Worker)
-- Vercel Hobby **gratis selamanya, tanpa credit card**
+- ✅ Kode **tidak ada token hardcoded** — semua via env var
+- ✅ `TURBO_SERVICE_URL` gak di-set → Turbo Layer skip, bot jalan normal
+- ✅ Semua fungsi Turbo return `null` kalau gagal — **TIDAK PERNAH throw**
+- ✅ Vercel Hobby **gratis selamanya, tanpa credit card**
 
 ---
 
