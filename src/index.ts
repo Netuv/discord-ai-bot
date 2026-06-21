@@ -4,7 +4,7 @@ import { handleScheduled, handleTestCron, clearAllTasks, addTask, deleteTask, up
 import { AiRouter, defaultProviderModels } from "./ai-router";
 import { getUserConfig, setUserConfig, clearUserConfig } from "./user-config";
 import { WebScout } from "./web-scout";
-import { renderChat, discordFollowupDirect } from "./render-helper";
+import { turboChat, discordFollowupDirect } from "./turbo-helper";
 
 // ─── WORKER HANDLER ─────────────────────────────────────────
 
@@ -341,10 +341,10 @@ export default {
             );
           }
 
-          // ═══ Handler /ask — HYBRID RENDER TURBO LAYER ═══
+          // ═══ Handler /ask — HYBRID TURBO LAYER ═══
           // Langkah 1: Kirim DEFERRED response (type 5) — user lihat loading
           // Langkah 2: Background processing via ctx.waitUntil()
-          // Langkah 3: Coba Render dulu, fallback ke AiRouter
+          // Langkah 3: Coba Turbo Layer dulu, fallback ke AiRouter
           // Langkah 4: Kirim hasil via PATCH follow-up webhook
           if (cmdName === "ask") {
             const promptUser = interaction.data.options?.[0]?.value || "Halo";
@@ -357,14 +357,14 @@ export default {
               try {
                 let balasanAI: string;
                 let usedConfig: { providerName?: string; modelName?: string } | null = null;
-                let fromRender = false;
+                let fromTurbo = false;
 
-                // COBA Render dulu (kalau RENDER_SERVICE_URL di-set)
-                const renderResult = await renderChat(env, [{ role: "user", content: promptUser }]);
+                // COBA Turbo Layer dulu (kalau TURBO_SERVICE_URL di-set)
+                const turboResult = await turboChat(env, [{ role: "user", content: promptUser }]);
 
-                if (renderResult) {
-                  balasanAI = renderResult;
-                  fromRender = true;
+                if (turboResult) {
+                  balasanAI = turboResult;
+                  fromTurbo = true;
                 } else {
                   // Fallback ke AiRouter — SAMA PERSIS SEPERTI SEBELUMNYA
                   const router = new AiRouter(env);

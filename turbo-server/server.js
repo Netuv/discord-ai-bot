@@ -1,5 +1,5 @@
 /**
- * 🚀 Render Turbo Layer — Heavy AI Processing Server
+ * 🚀 Turbo Layer — Heavy AI Processing Server
  * 
  * Multi-provider AI server untuk Discord AI Bot.
  * Priority: OpenRouter → NVIDIA → Cloudflare AI (fallback)
@@ -43,7 +43,7 @@ async function callAI(messages, model) {
       const content = await callOpenRouter(messages, model);
       if (content) return { content, provider: 'openrouter' };
     } catch (e) {
-      console.warn(`[Render] OpenRouter gagal: ${e.message}`);
+      console.warn(`[Turbo] OpenRouter gagal: ${e.message}`);
     }
   }
 
@@ -53,7 +53,7 @@ async function callAI(messages, model) {
       const content = await callNVIDIA(messages, model);
       if (content) return { content, provider: 'nvidia' };
     } catch (e) {
-      console.warn(`[Render] NVIDIA gagal: ${e.message}`);
+      console.warn(`[Turbo] NVIDIA gagal: ${e.message}`);
     }
   }
 
@@ -63,7 +63,7 @@ async function callAI(messages, model) {
       const content = await callCloudflareAI(messages, model);
       if (content) return { content, provider: 'cloudflare' };
     } catch (e) {
-      console.warn(`[Render] Cloudflare AI gagal: ${e.message}`);
+      console.warn(`[Turbo] Cloudflare AI gagal: ${e.message}`);
     }
   }
 
@@ -84,7 +84,7 @@ async function callOpenRouter(messages, customModel) {
       'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://github.com/Netuv/discord-ai-bot',
-      'X-Title': 'Discord AI Bot - Render Turbo',
+      'X-Title': 'Discord AI Bot - Turbo Layer',
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(AI_TIMEOUT),
@@ -319,7 +319,7 @@ app.post('/ai/chat', async function(req, res) {
     }
 
     const elapsed = Date.now() - startTime;
-    console.log(`[Render] AI chat selesai dalam ${elapsed}ms via ${result.provider}`);
+    console.log(`[Turbo] AI chat selesai dalam ${elapsed}ms via ${result.provider}`);
 
     res.json({
       content: result.content,
@@ -327,7 +327,7 @@ app.post('/ai/chat', async function(req, res) {
       elapsed_ms: elapsed,
     });
   } catch (e) {
-    console.error(`[Render] /ai/chat error: ${e.message}`);
+    console.error(`[Turbo] /ai/chat error: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
 });
@@ -352,11 +352,11 @@ app.post('/article/heavy', async function(req, res) {
     if (result) {
       const article = parseArticleJSON(result.content);
       const elapsed = Date.now() - startTime;
-      console.log(`[Render] Artikel selesai dalam ${elapsed}ms via ${result.provider}`);
+      console.log(`[Turbo] Artikel selesai dalam ${elapsed}ms via ${result.provider}`);
       return res.json({ ...article, _meta: { provider: result.provider, elapsed_ms: elapsed } });
     }
   } catch (e) {
-    console.warn(`[Render] Article attempt 1 gagal: ${e.message}`);
+    console.warn(`[Turbo] Article attempt 1 gagal: ${e.message}`);
   }
 
   // Attempt 2: Simplified prompt tanpa review
@@ -369,7 +369,7 @@ app.post('/article/heavy', async function(req, res) {
       return res.json({ ...article, _meta: { provider: result.provider, elapsed_ms: elapsed } });
     }
   } catch (e) {
-    console.warn(`[Render] Article attempt 2 gagal: ${e.message}`);
+    console.warn(`[Turbo] Article attempt 2 gagal: ${e.message}`);
   }
 
   // Attempt 3: Minimal prompt
@@ -392,7 +392,7 @@ app.post('/article/heavy', async function(req, res) {
       return res.json({ ...article, _meta: { provider: result.provider, elapsed_ms: elapsed } });
     }
   } catch (e) {
-    console.warn(`[Render] Article attempt 3 gagal: ${e.message}`);
+    console.warn(`[Turbo] Article attempt 3 gagal: ${e.message}`);
   }
 
   // Semua gagal
@@ -456,7 +456,7 @@ app.post('/discord/followup', async function(req, res) {
 
     res.json({ ok: true, chunks: chunks.length });
   } catch (e) {
-    console.error(`[Render] /discord/followup error: ${e.message}`);
+    console.error(`[Turbo] /discord/followup error: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
 });
@@ -486,7 +486,7 @@ app.listen(PORT, function() {
   if (NVIDIA_API_KEY) providers.push('NVIDIA');
   if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('Cloudflare AI');
 
-  console.log(`🚀 Render Turbo Layer running on port ${PORT}`);
+  console.log(`🚀 Turbo Layer running on port ${PORT}`);
   console.log(`📡 AI Providers: ${providers.length > 0 ? providers.join(' → ') : '⚠️  NONE (set env vars!)'}`);
   console.log(`⏰ Started at ${new Date().toISOString()}`);
 });

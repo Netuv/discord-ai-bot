@@ -576,12 +576,12 @@ discord-ai-bot/
 > Lihat `scripts/deploy-turbo.sh guide` untuk panduan lengkap.
 >
 > **UPDATE:** Provider = **Koyeb** (gratis, tanpa credit card). Bukan Render.com.
-> Kode `render-server/` tetap sama — hanya deployment platform yang beda.
+> Kode `turbo-server/` tetap sama — hanya deployment platform yang beda.
 
 #### 📋 Task Checklist
-- [x] **render-server/server.js** — Express server: `/health`, `/ai/chat`, `/article/heavy`, `/discord/followup`
-- [x] **render-server/package.json** — Dependencies (express + node-fetch v2)
-- [x] **render-server/Dockerfile** — Node.js 20 slim, production deploy
+- [x] **turbo-server/server.js** — Express server: `/health`, `/ai/chat`, `/article/heavy`, `/discord/followup`
+- [x] **turbo-server/package.json** — Dependencies (express + node-fetch v2)
+- [x] **turbo-server/Dockerfile** — Node.js 20 slim, production deploy
 - [x] **src/render-helper.ts** — NEW: HTTP client ke Turbo Layer (5 fungsi, silent fallback)
 - [x] **src/index.ts** — /ask handler: DEFERRED response (type 5) + background via ctx.waitUntil() + coba Turbo Layer dulu → fallback AiRouter
 - [x] **src/scheduler.ts** — executeAiArticle(): coba renderHeavyArticle() setelah STEP 2, override kalau valid
@@ -593,9 +593,9 @@ discord-ai-bot/
 #### ✅ After Deployment — Changes Verified & Deployed
 | # | File/Fitur | Status | Keterangan |
 |---|------------|--------|------------|
-| 1 | `render-server/server.js` | ✅ New | 492 baris — Express server 4 endpoint + multi-provider AI (OpenRouter→NVIDIA→Cloudflare) |
-| 2 | `render-server/package.json` | ✅ New | express ^4.18.2, node-fetch ^2.7.0 |
-| 3 | `render-server/Dockerfile` | ✅ New | node:20-slim, production npm ci |
+| 1 | `turbo-server/server.js` | ✅ New | 492 baris — Express server 4 endpoint + multi-provider AI (OpenRouter→NVIDIA→Cloudflare) |
+| 2 | `turbo-server/package.json` | ✅ New | express ^4.18.2, node-fetch ^2.7.0 |
+| 3 | `turbo-server/Dockerfile` | ✅ New | node:20-slim, production npm ci |
 | 4 | `src/render-helper.ts` | ✅ New | 204 baris — 5 exported functions: `renderChat`, `renderHeavyArticle`, `renderDiscordFollowup`, `discordFollowupDirect`, `isRenderAlive` |
 | 5 | `src/index.ts` — /ask | ✅ Modified | DEFERRED response (type 5) + `ctx.waitUntil()` + coba Turbo → fallback AiRouter + PATCH webhook |
 | 6 | `src/scheduler.ts` — executeAiArticle | ✅ Modified | Coba `renderHeavyArticle()` setelah STEP 2, override artikel kalau valid |
@@ -610,7 +610,7 @@ discord-ai-bot/
 3. Klik **Create Web Service** → pilih **GitHub** → connect repo `Netuv/discord-ai-bot`
 4. Set konfigurasi:
    - **Builder:** Docker
-   - **Dockerfile:** `render-server/Dockerfile` (otomatis terdeteksi)
+   - **Dockerfile:** `turbo-server/Dockerfile` (otomatis terdeteksi)
    - **Port:** 3000
    - **Instance:** Nano (Free)
 5. (Optional) Set Environment Variables:
@@ -620,7 +620,7 @@ discord-ai-bot/
 7. Catet URL: `https://discord-turbo-layer-xxx.koyeb.app`
 8. Set Cloudflare secret:
    ```bash
-   npx wrangler secret put RENDER_SERVICE_URL
+   npx wrangler secret put TURBO_SERVICE_URL
    # Paste URL dari Koyeb
    npx wrangler deploy
    ```
@@ -630,7 +630,7 @@ discord-ai-bot/
    ```
 
 #### 🛡️ Garansi Keamanan
-- Kalau `RENDER_SERVICE_URL` gak di-set → Turbo Layer skip otomatis, bot jalan seperti biasa
+- Kalau `TURBO_SERVICE_URL` gak di-set → Turbo Layer skip otomatis, bot jalan seperti biasa
 - Semua fungsi Turbo return `null` kalau gagal → TIDAK PERNAH throw
 - Kalau Koyeb mati → bot tetap 100% fungsional (fallback ke Worker)
 - Koyeb **tidak minta credit card** — cukup login Google/GitHub

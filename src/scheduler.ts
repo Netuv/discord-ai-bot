@@ -17,7 +17,7 @@ import { searchAnimeImage, downloadImage } from "./image-scraper";
 import { findYouTubeVideo as videoScraperFindVideo } from "./video-scraper";
 import { researchArticle, generateArticle, parseArticleJSON, buildArticlePrompt, getArticleColor, generateFallbackArticle } from "./article-writer";
 import { publishArticle } from "./article-publisher";
-import { renderHeavyArticle } from "./render-helper";
+import { turboHeavyArticle } from "./turbo-helper";
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -463,18 +463,18 @@ export async function executeAiArticle(
     article = generateFallbackArticle(topic);
   }
 
-  // ═══ TRY RENDER (optional 2nd layer) ═══════════════════
-  // Coba Render dulu — kalau valid, override article dari Worker
+  // ═══ TRY TURBO LAYER (optional 2nd layer) ════════════
+  // Coba Turbo Layer dulu — kalau valid, override article dari Worker
   // Kalau gagal → silent fallback, tetap pakai article existing
   try {
-    const renderArticle = await renderHeavyArticle(env, topic, research);
-    if (renderArticle && renderArticle.title && Array.isArray(renderArticle.sections) && renderArticle.sections.length > 0) {
-      console.log(`✅ [Render] Artikel valid dari Turbo Layer, override Worker article`);
-      article = renderArticle;
+    const turboArticle = await turboHeavyArticle(env, topic, research);
+    if (turboArticle && turboArticle.title && Array.isArray(turboArticle.sections) && turboArticle.sections.length > 0) {
+      console.log(`✅ [Turbo] Artikel valid dari Turbo Layer, override Worker article`);
+      article = turboArticle;
     }
   } catch (e: any) {
     // Silent fallback — Worker article tetap dipakai
-    console.log(`ℹ️ [Render] Tidak tersedia, lanjut pakai article dari Worker`);
+    console.log(`ℹ️ [Turbo] Tidak tersedia, lanjut pakai article dari Worker`);
   }
 
   // ═══ STEP 3-4: PUBLISH ke Discord via article-publisher ══

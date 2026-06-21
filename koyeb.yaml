@@ -10,7 +10,7 @@
 # 4. Pilih GitHub → connect repo "Netuv/discord-ai-bot"
 # 5. Set konfigurasi:
 #    - Builder: Docker
-#    - Root dir: render-server/
+#    - Root dir: turbo-server/
 #    - Port: 3000
 #    - Instance: Nano (Free)
 # 6. Set environment variables (optional)
@@ -55,7 +55,7 @@ services:
       branch: master
       build:
         builder: docker
-        dockerfile: render-server/Dockerfile
+        dockerfile: turbo-server/Dockerfile
     scalings:
       min: 0
       max: 1

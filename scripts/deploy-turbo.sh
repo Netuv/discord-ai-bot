@@ -115,7 +115,7 @@ koyeb_manual_guide() {
   echo "      ┌─────────────────────────────────────────────┐"
   echo "      │ Service Name:  discord-turbo-layer          │"
   echo "      │ Builder:       Docker                       │"
-  echo "      │ Dockerfile:    render-server/Dockerfile     │"
+  echo "      │ Dockerfile:    turbo-server/Dockerfile     │"
   echo "      │ Port:          3000                         │"
   echo "      │ Instance:      Nano (Free)                  │"
   echo "      │ Region:        Singapore / Frankfurt        │"
@@ -155,14 +155,14 @@ set_secret() {
   # Hapus trailing slash
   TURBO_URL="${TURBO_URL%/}"
 
-  echo "🔧 Set RENDER_SERVICE_URL = $TURBO_URL"
+  echo "🔧 Set TURBO_SERVICE_URL = $TURBO_URL"
   echo ""
 
   # Set secret via wrangler
-  npx wrangler secret put RENDER_SERVICE_URL <<< "$TURBO_URL"
+  npx wrangler secret put TURBO_SERVICE_URL <<< "$TURBO_URL"
 
   if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Secret RENDER_SERVICE_URL berhasil di-set!${NC}"
+    echo -e "${GREEN}✅ Secret TURBO_SERVICE_URL berhasil di-set!${NC}"
   else
     echo -e "${RED}❌ Gagal set secret. Pastikan kamu sudah login:${NC}"
     echo -e "${YELLOW}   npx wrangler login${NC}"
@@ -273,7 +273,7 @@ show_guide() {
   echo "      ┌─────────────────────────────────────────────┐"
   echo "      │ Service Name:  discord-turbo-layer          │"
   echo "      │ Builder:       Docker                       │"
-  echo "      │ Dockerfile:    render-server/Dockerfile     │"
+  echo "      │ Dockerfile:    turbo-server/Dockerfile     │"
   echo "      │ Port:          3000                         │"
   echo "      │ Instance:      Nano (Free ✓)                │"
   echo "      │ Region:        Singapore (paling dekat)     │"
@@ -294,7 +294,7 @@ show_guide() {
   echo ""
   echo -e "${BOLD}🔐 STEP 2: Set Cloudflare Secret${NC}"
   echo ""
-  echo "  npx wrangler secret put RENDER_SERVICE_URL"
+  echo "  npx wrangler secret put TURBO_SERVICE_URL"
   echo "  # Paste URL dari Koyeb: https://discord-turbo-layer-xxx.koyeb.app"
   echo ""
   echo "  Atau pake script:"
@@ -338,7 +338,7 @@ show_guide() {
   echo -e "${BOLD}⛔ Rollback${NC}"
   echo ""
   echo "  Kalau ada masalah — hapus secret, Worker tetap jalan normal:"
-  echo "  npx wrangler secret delete RENDER_SERVICE_URL"
+  echo "  npx wrangler secret delete TURBO_SERVICE_URL"
   echo "  npx wrangler deploy  # deploy ulang tanpa Turbo Layer"
   echo ""
   echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"

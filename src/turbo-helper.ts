@@ -1,26 +1,26 @@
 /**
- * render-helper.ts — HTTP Client ke Render Turbo Layer
+ * turbo-helper.ts — HTTP Client ke Turbo Layer (Koyeb)
  * 
  * Semua fungsi opsional: return null kalau gagal, TIDAK PERNAH throw.
- * Kalau env.RENDER_SERVICE_URL tidak diset → semua fungsi return null.
+ * Kalau env.TURBO_SERVICE_URL tidak diset → semua fungsi return null.
  * 
  * Fungsi:
- * - callRender()        — Generic POST ke endpoint Render
- * - renderChat()        — Chat AI via Render (heavy lifting)
- * - renderHeavyArticle()— Generate artikel via Render
- * - renderDiscordFollowup() — Kirim follow-up ke Discord via Render
- * - isRenderAlive()     — Health check Render server
- * - discordFollowupDirect() — Kirim follow-up LANGSUNG (tanpa Render proxy)
+ * - callTurbo()           — Generic POST ke endpoint Turbo
+ * - turboChat()           — Chat AI via Turbo (heavy lifting)
+ * - turboHeavyArticle()   — Generate artikel via Turbo
+ * - turboDiscordFollowup()— Kirim follow-up ke Discord via Turbo
+ * - isTurboAlive()        — Health check Turbo server
+ * - discordFollowupDirect() — Kirim follow-up LANGSUNG (tanpa Turbo proxy)
  */
 
 // ─── Generic Call ─────────────────────────────────────────
 
 /**
- * Panggil endpoint Render dengan silent fallback.
+ * Panggil endpoint Turbo dengan silent fallback.
  * Return parsed JSON atau null.
  */
-async function callRender(env: any, endpoint: string, payload: any): Promise<any | null> {
-  const baseUrl = env.RENDER_SERVICE_URL;
+async function callTurbo(env: any, endpoint: string, payload: any): Promise<any | null> {
+  const baseUrl = env.TURBO_SERVICE_URL;
   if (!baseUrl) return null;
 
   try {
@@ -33,48 +33,48 @@ async function callRender(env: any, endpoint: string, payload: any): Promise<any
 
     if (!res.ok) {
       // Logging minimal — biar keliatan di Worker logs
-      console.warn(`[Render] ${endpoint} HTTP ${res.status}`);
+      console.warn(`[Turbo] ${endpoint} HTTP ${res.status}`);
       return null;
     }
 
     return await res.json();
   } catch (e: any) {
     // Silent fallback — gak pernah throw
-    console.warn(`[Render] ${endpoint} error: ${e.message}`);
+    console.warn(`[Turbo] ${endpoint} error: ${e.message}`);
     return null;
   }
 }
 
-// ─── Chat via Render ──────────────────────────────────────
+// ─── Chat via Turbo ──────────────────────────────────────
 
 /**
- * Chat dengan AI via Render Turbo Layer.
+ * Chat dengan AI via Turbo Layer.
  * Return string response atau null.
  */
-export async function renderChat(
+export async function turboChat(
   env: any,
   messages: Array<{ role: string; content: string }>,
   model?: string
 ): Promise<string | null> {
-  const result = await callRender(env, "/ai/chat", { messages, model });
+  const result = await callTurbo(env, "/ai/chat", { messages, model });
   if (result && typeof result.content === "string" && result.content.length > 0) {
     return result.content;
   }
   return null;
 }
 
-// ─── Heavy Article via Render ─────────────────────────────
+// ─── Heavy Article via Turbo ─────────────────────────────
 
 /**
- * Generate artikel berat via Render Turbo Layer.
+ * Generate artikel berat via Turbo Layer.
  * Return parsed Article object atau null.
  */
-export async function renderHeavyArticle(
+export async function turboHeavyArticle(
   env: any,
   topic: string,
   research: { summary?: string; reviewSummary?: string }
 ): Promise<any | null> {
-  const result = await callRender(env, "/article/heavy", {
+  const result = await callTurbo(env, "/article/heavy", {
     topic,
     research: {
       summary: research.summary || "",
@@ -96,19 +96,19 @@ export async function renderHeavyArticle(
   return null;
 }
 
-// ─── Discord Follow-up via Render Proxy ──────────────────
+// ─── Discord Follow-up via Turbo Proxy ──────────────────
 
 /**
- * Kirim follow-up ke Discord via Render proxy.
+ * Kirim follow-up ke Discord via Turbo proxy.
  * Return true/false.
  */
-export async function renderDiscordFollowup(
+export async function turboDiscordFollowup(
   env: any,
   applicationId: string,
   interactionToken: string,
   content: string
 ): Promise<boolean> {
-  const result = await callRender(env, "/discord/followup", {
+  const result = await callTurbo(env, "/discord/followup", {
     applicationId,
     interactionToken,
     content,
@@ -119,7 +119,7 @@ export async function renderDiscordFollowup(
 // ─── Direct Discord Follow-up ─────────────────────────────
 
 /**
- * Kirim follow-up LANGSUNG ke Discord (tanpa proxy Render).
+ * Kirim follow-up LANGSUNG ke Discord (tanpa proxy Turbo).
  * PATCH ke webhook: /webhooks/{appId}/{intToken}/messages/@original
  * Discord webhook URL sudah termasuk auth — gak perlu Bot token.
  * 
@@ -169,11 +169,11 @@ export async function discordFollowupDirect(
 // ─── Health Check ─────────────────────────────────────────
 
 /**
- * Cek apakah Render server hidup.
+ * Cek apakah Turbo server hidup.
  * Return boolean.
  */
-export async function isRenderAlive(env: any): Promise<boolean> {
-  const baseUrl = env.RENDER_SERVICE_URL;
+export async function isTurboAlive(env: any): Promise<boolean> {
+  const baseUrl = env.TURBO_SERVICE_URL;
   if (!baseUrl) return false;
 
   try {

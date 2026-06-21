@@ -54,7 +54,7 @@ src/mcp-confirm.ts        → Action confirmation queue
 ### ✅ **YANG BOLEH DILAKUKAN:**
 
 1. **BUAT FILE BARU** di `src/` (prefiks `render-*` atau `turbo-*`)
-2. **BUAT FOLDER BARU** `render-server/` untuk server Turbo Layer (Express + Docker)
+2. **BUAT FOLDER BARU** `turbo-server/` untuk server Turbo Layer (Express + Docker)
 3. **TAMBAH IMPORT + PANGGILAN** di file existing — tapi hanya:
    - Panggilan **opsional** (bungkus try-catch)
    - Panggilan **non-blocking** (gak nunggu hasilnya)
@@ -136,9 +136,9 @@ if (hasilRender) {
 ║   POST /article/heavy       → Generate artikel berat         ║
 ║   POST /discord/followup    → Kirim pesan ke Discord         ║
 ║                                                              ║
-║   📂 FILE: render-server/server.js  (Express server)         ║
-║            render-server/package.json  (Dependencies)        ║
-║            render-server/Dockerfile  (Container config)      ║
+║   📂 FILE: turbo-server/server.js  (Express server)         ║
+║            turbo-server/package.json  (Dependencies)        ║
+║            turbo-server/Dockerfile  (Container config)      ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
@@ -171,7 +171,7 @@ Worker ──panggil─→ Render
 │
 ├── 📄 src/render-helper.ts          → HTTP client ke Render (wajib)
 │
-├── 📁 render-server/                 → Folder terpisah dari Worker
+├── 📁 turbo-server/                 → Folder terpisah dari Worker
 │   ├── 📄 server.js                  → Express server (wajib)
 │   ├── 📄 package.json               → Dependencies (wajib)
 │   └── 📄 Dockerfile                 → Container (opsional, buat jaga-jaga)
@@ -192,9 +192,9 @@ Worker ──panggil─→ Render
 | File | Baru/Modif? | Fungsi | Kompleksitas |
 |------|-------------|--------|:---:|
 | `src/render-helper.ts` | **BARU** | HTTP client + fallback logic | ⭐ Sederhana |
-| `render-server/server.js` | **BARU** | Express server 4 endpoint | ⭐⭐ Menengah |
-| `render-server/package.json` | **BARU** | Dependencies | ⭐ Sederhana |
-| `render-server/Dockerfile` | **BARU** | Container config | ⭐ Sederhana |
+| `turbo-server/server.js` | **BARU** | Express server 4 endpoint | ⭐⭐ Menengah |
+| `turbo-server/package.json` | **BARU** | Dependencies | ⭐ Sederhana |
+| `turbo-server/Dockerfile` | **BARU** | Container config | ⭐ Sederhana |
 | `src/index.ts` | ✅ **Modif** | `/ask` deferred response | ⭐⭐ Hati-hati |
 | `src/scheduler.ts` | ✅ **Modif** | Optional render article | ⭐ Sederhana |
 
@@ -223,7 +223,7 @@ Worker ──panggil─→ Render
  * 4. Silent fallback — gak ngaruh ke flow kalo Render mati
  * 
  * CARA KONEKSI:
- * render-helper.ts  →  render-server/server.js (HTTP POST)
+ * render-helper.ts  →  turbo-server/server.js (HTTP POST)
  *         ↑                        ↑
  *   Worker (caller)          Render (processor)
  * 
@@ -234,9 +234,9 @@ Worker ──panggil─→ Render
 
 // ─── Konfigurasi ─────────────────────────────────────────────
 // RENDER_URL: di-set dari secret Cloudflare atau fallback global
-// Cara set: `npx wrangler secret put RENDER_SERVICE_URL`
-const RENDER_URL = typeof RENDER_SERVICE_URL !== 'undefined'
-  ? RENDER_SERVICE_URL
+// Cara set: `npx wrangler secret put TURBO_SERVICE_URL`
+const RENDER_URL = typeof TURBO_SERVICE_URL !== 'undefined'
+  ? TURBO_SERVICE_URL
   : (globalThis as any)?.__RENDER_URL__ || '';
 
 const RENDER_TIMEOUT_MS = 50000; // 50 detik — untuk heavy AI processing
@@ -307,7 +307,7 @@ async function callRender<T = any>(
 ): Promise<T | null> {
   // Kalau Render gak dikonfigurasi → skip (silent)
   if (!RENDER_URL) {
-    console.log('ℹ️ Render: not configured (RENDER_SERVICE_URL empty)');
+    console.log('ℹ️ Render: not configured (TURBO_SERVICE_URL empty)');
     return null;
   }
 
@@ -415,7 +415,7 @@ export function getRenderUrl(): string {
 }
 ```
 
-### 4.2 `render-server/server.js` — Turbo Layer Processor
+### 4.2 `turbo-server/server.js` — Turbo Layer Processor
 
 **Aturan untuk Agent yang nulis:**
 - ✅ Server ini STANDALONE — gak perlu akses ke code Worker
@@ -915,7 +915,7 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 ```
 
-### 4.3 `render-server/package.json`
+### 4.3 `turbo-server/package.json`
 
 ```json
 {
@@ -934,7 +934,7 @@ app.listen(PORT, '0.0.0.0', () => {
 }
 ```
 
-### 4.4 `render-server/Dockerfile`
+### 4.4 `turbo-server/Dockerfile`
 
 ```dockerfile
 FROM node:20-slim
@@ -1137,7 +1137,7 @@ import { renderHeavyArticle } from './render-helper';
 | **Tidak ada data loss** | Semua data tetap di KV — Render gak simpen apa-apa |
 | **Tidak ada perf degradation** | Kalau Render lambat → Worker gak nunggu, pake punya sendiri |
 | **Tidak ada untested code path** | Fallback path = kode existing yang sudah jalan berbulan-bulan |
-| **Rollback 30 detik** | `npx wrangler secret delete RENDER_SERVICE_URL` → Render mati, bot normal |
+| **Rollback 30 detik** | `npx wrangler secret delete TURBO_SERVICE_URL` → Render mati, bot normal |
 
 ### 6.3 Behavior Matrix
 
@@ -1170,7 +1170,7 @@ npx tsc --noEmit
 
 **Test B: Render Server Lokal**
 ```bash
-cd render-server
+cd turbo-server
 npm install
 node server.js &
 # Test health
@@ -1240,7 +1240,7 @@ Dashboard Render → Service → Logs
 
 ```bash
 # Hapus Render URL → render-helper otomatis return null
-npx wrangler secret delete RENDER_SERVICE_URL
+npx wrangler secret delete TURBO_SERVICE_URL
 
 # Selesai! Bot balik ke kondisi awal.
 # Gak perlu deploy ulang, gak perlu git revert.
@@ -1254,10 +1254,10 @@ git checkout -- src/index.ts src/scheduler.ts
 
 # 2. Hapus file baru
 rm src/render-helper.ts
-rm -rf render-server/
+rm -rf turbo-server/
 
 # 3. Hapus secret
-npx wrangler secret delete RENDER_SERVICE_URL
+npx wrangler secret delete TURBO_SERVICE_URL
 
 # 4. Deploy ulang
 npx wrangler deploy
@@ -1269,12 +1269,12 @@ npx wrangler deploy
 
 ### Yang HARUS dilakukan:
 
-1. **Buat 3 file baru** di folder `render-server/`
+1. **Buat 3 file baru** di folder `turbo-server/`
 2. **Buat 1 file baru** di `src/render-helper.ts`
 3. **Tambah 2 baris import** di `src/index.ts` dan `src/scheduler.ts`
 4. **Ubah handler `/ask`** di `src/index.ts` (+15 baris, pake deferred)
 5. **Tambah 5 baris** di `src/scheduler.ts` (optional render article)
-6. **Set secret** `RENDER_SERVICE_URL` di Cloudflare
+6. **Set secret** `TURBO_SERVICE_URL` di Cloudflare
 
 ### Yang TIDAK BOLEH dilakukan:
 
