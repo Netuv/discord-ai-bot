@@ -1,0 +1,37 @@
+# 🚀 Render Blueprint — Hybrid Render Turbo Layer
+# 
+# Render akan otomatis membaca file ini dari GitHub repo.
+# Tinggal connect repo ke Render → service akan dibuat otomatis!
+#
+# Cara pakai:
+# 1. Push ke GitHub
+# 2. Buka https://dashboard.render.com
+# 3. Klik "New +" → "Blueprint"
+# 4. Pilih repo ini → Render auto-deploy!
+#
+# Atau manual: New + → Web Service → isi manual (lihat deploy-turbo.sh guide)
+
+services:
+  # ═══ Discord AI Bot — Turbo Layer ═══
+  # Heavy AI processing untuk prompt berat & artikel
+  - type: web
+    name: discord-turbo-layer
+    rootDir: render-server
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      # Priority 1 (recommended): OpenRouter — banyak model gratis
+      - key: OPENROUTER_API_KEY
+        sync: false  # User isi manual di dashboard
+      # Priority 2: NVIDIA NIM — gratis, 121+ model
+      - key: NVIDIA_API_KEY
+        sync: false
+      # Priority 3: Cloudflare AI (via REST API)
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_AI_TOKEN
+        sync: false
