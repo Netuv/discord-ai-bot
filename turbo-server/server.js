@@ -14,7 +14,7 @@
  */
 
 const express = require('express');
-const fetch = require('node-fetch');
+// node-fetch removed — Node.js 18+ has native fetch
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -38,27 +38,7 @@ const AI_TIMEOUT = 45000; // 45 detik per provider
  * Return { content } atau null.
  */
 async function callAI(messages, model) {
-  // Priority 1: OpenRouter
-  if (OPENROUTER_API_KEY) {
-    try {
-      const content = await callOpenRouter(messages, model);
-      if (content) return { content, provider: 'openrouter' };
-    } catch (e) {
-      console.warn(`[Turbo] OpenRouter gagal: ${e.message}`);
-    }
-  }
-
-  // Priority 2: NVIDIA
-  if (NVIDIA_API_KEY) {
-    try {
-      const content = await callNVIDIA(messages, model);
-      if (content) return { content, provider: 'nvidia' };
-    } catch (e) {
-      console.warn(`[Turbo] NVIDIA gagal: ${e.message}`);
-    }
-  }
-
-  // Priority 3: OpenCode
+  // Priority 1: OpenCode — DeepSeek Flash Free (GRATIS! 🆓)
   if (OPENCODE_API_KEY) {
     try {
       const content = await callOpenCode(messages, model);
@@ -68,7 +48,27 @@ async function callAI(messages, model) {
     }
   }
 
-  // Priority 4: Cloudflare AI (via REST API)
+  // Priority 2: Step 3.7 Flash — 198B MoE via NVIDIA NIM (free tier)
+  if (NVIDIA_API_KEY) {
+    try {
+      const content = await callStep37Flash(messages, model);
+      if (content) return { content, provider: 'step-3.7-flash' };
+    } catch (e) {
+      console.warn(`[Turbo] Step 3.7 Flash gagal: ${e.message}`);
+    }
+  }
+
+  // Priority 3: OpenRouter
+  if (OPENROUTER_API_KEY) {
+    try {
+      const content = await callOpenRouter(messages, model);
+      if (content) return { content, provider: 'openrouter' };
+    } catch (e) {
+      console.warn(`[Turbo] OpenRouter gagal: ${e.message}`);
+    }
+  }
+
+  // Priority 4: Cloudflare AI (via REST API — Llama 3.3 70B)
   if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) {
     try {
       const content = await callCloudflareAI(messages, model);
@@ -170,8 +170,39 @@ async function callOpenCode(messages, customModel) {
   return content;
 }
 
+async function callStep37Flash(messages, customModel) {
+  const model = customModel || 'stepfun-ai/step-3.7-flash';
+  const body = {
+    model,
+    messages,
+    max_tokens: 16384,
+    temperature: 1.00,
+    top_p: 0.95,
+  };
+
+  const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${NVIDIA_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(AI_TIMEOUT),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => 'unknown');
+    throw new Error(`Step 3.7 Flash ${res.status}: ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('Step 3.7 Flash: respons kosong');
+  return content;
+}
+
 async function callCloudflareAI(messages, customModel) {
-  const model = customModel || '@cf/meta/llama-4-scout-17b-16e-instruct';
+  const model = customModel || '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
   const url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${model}`;
 
   const res = await fetch(url, {
@@ -195,150 +226,12 @@ async function callCloudflareAI(messages, customModel) {
   return content;
 }
 
-// ─── Article Prompt Builder (like article-writer.ts) ──────
 
-function buildArticlePrompt(topic, summary, reviewSummary) {
-  return (
-    `Kamu adalah jurnalis anime yang asik dan santai. Buat artikel singkat dari data di bawah.\n` +
-    `\n` +
-    `## TOPIK: ${topic}\n` +
-    `## DATA BERITA:\n${summary || 'Gunakan pengetahuan umum.'}\n` +
-    (reviewSummary ? `\n## OPINI PUBLIK:\n${reviewSummary}\n` : '') +
-    `\n` +
-    `## TUGAS:\n` +
-    `Buat artikel JSON dengan 1-3 section. TIDAK ADA closing.\n` +
-    `\n` +
-    `FORMAT JSON:\n` +
-    `{\n` +
-    `  "title": "[Emoji] Headline max 100 karakter",\n` +
-    `  "intro": "Hook 2 kalimat — bikin penasaran!",\n` +
-    `  "sections": [{\n` +
-    `    "heading": "🔍 Sub-judul",\n` +
-    `    "body": "Narasi 4-6 kalimat. Santai, mengalir, bukan poin-poin!",\n` +
-    `    "image_query": "Kata kunci gambar spesifik (atau kosongkan)",\n` +
-    `    "video_query": "Kata kunci video/trailer YouTube (atau kosongkan)"\n` +
-    `  }],\n` +
-    `  "category": "anime/manga/game/breaking/announcement/general"\n` +
-    `}\n` +
-    `\n` +
-    `## ATURAN DISCORD (WAJIB DIINGAT!):\n` +
-    `- 🔴 HEADLINE dikirim sebagai EMBED (title + intro + warna kategori)\n` +
-    `- 🔴 BREAK LINE: Setiap JUDUL/HEADING WAJIB punya break line setelahnya!\n` +
-    `- 🔴 Judul dikirim sebagai MESSAGE TERPISAH dari body narasi (JANGAN digabung!)\n` +
-    `- 🔴 Tiap section format: [Judul message] → [Narasi body message] → [Video link] → [Gambar]\n` +
-    `- 🔴 Antar section dipisah separator "---"\n` +
-    `- 🔴 TIDAK ADA closing/kesimpulan — artikel berakhir natural\n` +
-    `\n` +
-    `## ATURAN GAYA BAHASA:\n` +
-    `- Gaya santai kayak ngobrol di Discord ("aku-kamu")\n` +
-    `- Paragraf pendek 2-3 kalimat, mengalir alami\n` +
-    `- Hook kuat di intro — bikin penasaran!\n` +
-    `- Sertakan opini dari berbagai sumber (Reddit, forum, ANN) — kutip sumbernya!\n` +
-    `- Cari konsensus publik: "Mayoritas setuju...", "Yang bikin ramai adalah..."\n` +
-    `- TIDAK ADA bullet list di body — semua narasi!\n` +
-    `- TIDAK ADA "Kesimpulannya" atau kata penutup formal\n` +
-    `- JANGAN ngarang fakta — pake data real dari berita\n` +
-    `- JANGAN tambah teks lain di luar JSON\n` +
-    `\n` +
-    `- ⛔ DILARANG KERAS: Tambahkan watermark, footer, "generated by AI", "Scheduled content", atau teks promosi APAPUN!\n` +
-    `BALAS HANYA JSON, tanpa teks lain!`
-  );
-}
+// ─── POST /article/heavy — Simple AI Proxy ───────────────
+// Worker handle prompt building & JSON parsing (src/article-writer.ts).
+// Turbo Layer hanya call AI dengan prompt yang sudah jadi dari Worker.
 
-// ─── JSON Parser (like article-writer.ts) ─────────────────
-
-function parseArticleJSON(raw) {
-  if (!raw || raw.trim().length === 0) {
-    throw new Error('Response AI kosong');
-  }
-
-  let cleaned = raw
-    .replace(/!\[.*?\]\(.*?\)/g, '')
-    .replace(/\[.*?\]\(.*?\)/g, '')
-    .replace(/[\u0000-\u001F\u007F]/g, '')
-    .trim();
-
-  let parsed = null;
-
-  // Strategy 1: Extract JSON
-  try {
-    const m = cleaned.match(/\{[\s\S]*\}/);
-    if (m) parsed = JSON.parse(m[0]);
-  } catch {}
-
-  // Strategy 2: Hapus URLs
-  if (!parsed) {
-    try {
-      const r = cleaned.replace(/https?:\/\/[^\s,\\\"}\]]+/g, '[link]');
-      const m = r.match(/\{[\s\S]*\}/);
-      if (m) parsed = JSON.parse(m[0]);
-    } catch {}
-  }
-
-  // Strategy 3: Fix broken JSON
-  if (!parsed) {
-    try {
-      const fixed = cleaned
-        .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":')
-        .replace(/:\s*'([^']*)'/g, ':"$1"')
-        .replace(/,\s*}/g, '}')
-        .replace(/,\s*\]/g, ']');
-      const m = fixed.match(/\{[\s\S]*\}/);
-      if (m) parsed = JSON.parse(m[0]);
-    } catch {}
-  }
-
-  if (!parsed) {
-    throw new Error('AI gagal generate artikel valid — response bukan JSON');
-  }
-
-  // Validasi sections
-  if (!parsed.sections || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
-    if (parsed.topics && Array.isArray(parsed.topics) && parsed.topics.length > 0) {
-      parsed.sections = parsed.topics;
-      delete parsed.topics;
-    } else {
-      parsed.sections = [{
-        heading: '📖 Lanjutan',
-        body: parsed.intro || 'Topik ini lagi hangat dibicarakan di komunitas.',
-        image_query: '',
-        video_query: '',
-      }];
-    }
-  }
-
-  parsed.sections = parsed.sections.map(function(s) {
-    return {
-      heading: s.heading || '📖',
-      body: s.body || s.text || s.content || '',
-      image_query: s.image_query || '',
-      video_query: s.video_query || '',
-    };
-  });
-
-  return parsed;
-}
-
-// ─── Health Check ─────────────────────────────────────────
-
-app.get('/health', function(req, res) {
-  const providers = [];
-  if (OPENROUTER_API_KEY) providers.push('openrouter');
-  if (NVIDIA_API_KEY) providers.push('nvidia');
-  if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('cloudflare');
-  if (OPENCODE_API_KEY) providers.push('opencode');
-
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    providers: providers.length > 0 ? providers : ['none'],
-  });
-});
-
-// ─── POST /ai/chat — Heavy AI Chat ────────────────────────
-
-app.post('/ai/chat', async function(req, res) {
+app.post('/article/heavy', async function(req, res) {
   const startTime = Date.now();
   const { messages, model } = req.body;
 
@@ -361,7 +254,7 @@ app.post('/ai/chat', async function(req, res) {
     }
 
     const elapsed = Date.now() - startTime;
-    console.log(`[Turbo] AI chat selesai dalam ${elapsed}ms via ${result.provider}`);
+    console.log(`[Turbo] Article AI selesai dalam ${elapsed}ms via ${result.provider}`);
 
     res.json({
       content: result.content,
@@ -369,90 +262,9 @@ app.post('/ai/chat', async function(req, res) {
       elapsed_ms: elapsed,
     });
   } catch (e) {
-    console.error(`[Turbo] /ai/chat error: ${e.message}`);
+    console.error(`[Turbo] /article/heavy error: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
-});
-
-// ─── POST /article/heavy — Generate Artikel Berat ─────────
-
-app.post('/article/heavy', async function(req, res) {
-  const startTime = Date.now();
-  const { topic, research } = req.body;
-
-  if (!topic || typeof topic !== 'string') {
-    return res.status(400).json({ error: 'Field "topic" diperlukan (string)' });
-  }
-
-  const summary = research?.summary || '';
-  const reviewSummary = research?.reviewSummary || '';
-
-  // Attempt 1: Full prompt dengan research
-  try {
-    const prompt = buildArticlePrompt(topic, summary, reviewSummary);
-    const result = await callAI([{ role: 'user', content: prompt }]);
-    if (result) {
-      const article = parseArticleJSON(result.content);
-      const elapsed = Date.now() - startTime;
-      console.log(`[Turbo] Artikel selesai dalam ${elapsed}ms via ${result.provider}`);
-      return res.json({ ...article, _meta: { provider: result.provider, elapsed_ms: elapsed } });
-    }
-  } catch (e) {
-    console.warn(`[Turbo] Article attempt 1 gagal: ${e.message}`);
-  }
-
-  // Attempt 2: Simplified prompt tanpa review
-  try {
-    const simplePrompt = buildArticlePrompt(topic, summary, '');
-    const result = await callAI([{ role: 'user', content: simplePrompt }]);
-    if (result) {
-      const article = parseArticleJSON(result.content);
-      const elapsed = Date.now() - startTime;
-      return res.json({ ...article, _meta: { provider: result.provider, elapsed_ms: elapsed } });
-    }
-  } catch (e) {
-    console.warn(`[Turbo] Article attempt 2 gagal: ${e.message}`);
-  }
-
-  // Attempt 3: Minimal prompt
-  try {
-    const minimalPrompt = (
-      `Buat artikel anime pendek tentang: ${topic}\n` +
-      `BALAS HANYA JSON ini:\n` +
-      `{\n` +
-      `  "title": "[Emoji] Judul",\n` +
-      `  "intro": "Hook 2 kalimat",\n` +
-      `  "sections": [{"heading":"📖 Sub-judul","body":"Narasi singkat 3-4 kalimat","image_query":"","video_query":""}],\n` +
-      `  "category": "anime"\n` +
-      `}\n` +
-      `Gaya santai, tanpa kesimpulan. JANGAN tambah teks lain!`
-    );
-    const result = await callAI([{ role: 'user', content: minimalPrompt }]);
-    if (result) {
-      const article = parseArticleJSON(result.content);
-      const elapsed = Date.now() - startTime;
-      return res.json({ ...article, _meta: { provider: result.provider, elapsed_ms: elapsed } });
-    }
-  } catch (e) {
-    console.warn(`[Turbo] Article attempt 3 gagal: ${e.message}`);
-  }
-
-  // Semua gagal
-  res.status(503).json({
-    error: 'Gagal generate artikel setelah 3 percobaan',
-    topic,
-    fallback: {
-      title: `📰 ${topic.slice(0, 80)}`,
-      intro: `Halo! Berikut ini rangkuman singkat tentang ${topic} yang lagi ramai dibahas.`,
-      sections: [{
-        heading: '📖 Yang Perlu Kamu Tahu',
-        body: `${topic} adalah salah satu topik yang lagi hangat dibicarakan di komunitas anime.`,
-        image_query: topic,
-        video_query: topic,
-      }],
-      category: 'general',
-    },
-  });
 });
 
 // ─── POST /discord/followup — Kirim Follow-up ke Discord ──
@@ -531,13 +343,14 @@ const isVercel = process.env.VERCEL === '1';
 if (!isVercel) {
   app.listen(PORT, function() {
     const providers = [];
-    if (OPENROUTER_API_KEY) providers.push('OpenRouter');
-    if (NVIDIA_API_KEY) providers.push('NVIDIA');
     if (OPENCODE_API_KEY) providers.push('OpenCode');
+    if (NVIDIA_API_KEY) providers.push('Step 3.7 Flash');
+    if (OPENROUTER_API_KEY) providers.push('OpenRouter');
     if (CLOUDFLARE_AI_TOKEN && CLOUDFLARE_ACCOUNT_ID) providers.push('Cloudflare AI');
 
     console.log(`🚀 Turbo Layer running on port ${PORT}`);
-    console.log(`📡 AI Providers: ${providers.length > 0 ? providers.join(' → ') : '⚠️  NONE (set env vars!)'}`);
+    console.log(`📡 AI Priority: OpenCode → Step 3.7 Flash → OpenRouter → Cloudflare`);
+    console.log(`📡 Active Providers: ${providers.length > 0 ? providers.join(' → ') : '⚠️  NONE (set env vars!)'}`);
     console.log(`⏰ Started at ${new Date().toISOString()}`);
   });
 }

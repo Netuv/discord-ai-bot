@@ -5,6 +5,8 @@ import { AiRouter, defaultProviderModels } from "./ai-router";
 import { getUserConfig, setUserConfig, clearUserConfig } from "./user-config";
 import { WebScout } from "./web-scout";
 import { turboChat, discordFollowupDirect } from "./turbo-helper";
+import { searchAnimeImage } from "./image-scraper";
+import { findYouTubeVideo } from "./video-scraper";
 
 // ─── WORKER HANDLER ─────────────────────────────────────────
 
@@ -88,7 +90,40 @@ export default {
         }
       }
 
-      // ═══ SCHEDULER REST API — CRUD Task (tanpa edit TypeScript!) ═══
+      // ═══ DEBUG: Test scraper langsung ═══
+      // GET /debug/media?q=Demon Slayer&type=video
+      // GET /debug/media?q=Demon Slayer&type=image
+      if (url.pathname === "/debug/media" && request.method === "GET") {
+        const query = url.searchParams.get("q");
+        const type = url.searchParams.get("type") || "both";
+        if (!query) return new Response("Missing ?q= parameter", { status: 400 });
+
+        const results: any = { query, type, timestamp: new Date().toISOString() };
+
+        try {
+          if (type === "image" || type === "both") {
+            const img = await searchAnimeImage(query, { env });
+            results.image = img ? { url: img.url, source: img.source, filename: img.filename } : null;
+          }
+        } catch (e: any) {
+          results.image_error = e.message;
+        }
+
+        try {
+          if (type === "video" || type === "both") {
+            const video = await findYouTubeVideo(query, env);
+            results.video = video || null;
+          }
+        } catch (e: any) {
+          results.video_error = e.message;
+        }
+
+        return new Response(JSON.stringify(results, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // ═══ SCHEDULER REST API — CRUD Task ═══
       // GET  /cron/tasks       → List semua task
       // GET  /cron/tasks?id=X  → Detail satu task
       // POST /cron/tasks       → Buat task baru (JSON body)

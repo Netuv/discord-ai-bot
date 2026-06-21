@@ -15,6 +15,8 @@
 import { searchAnimeImage } from "./image-scraper";
 import { findYouTubeVideo } from "./video-scraper";
 import { Article, getArticleColor } from "./article-writer";
+import { auditBeforePublish } from "./article-auditor";
+import { optimizeMediaQuery, OptimizedMediaQuery } from "./media-query-optimizer";
 
 // ─── Rate Limiter (Optimized) ──────────────────────────────
 
@@ -139,7 +141,9 @@ export async function sendDiscordMessage(
 }
 
 /**
- * Kirim gambar ke Discord sebagai attachment — download + upload via FormData
+ * Kirim gambar ke Discord — URL langsung (Discord auto-embed).
+ * Fix v4.3: Ganti download+upload (FormData) ke URL direct.
+ * Approach lama rawan timeout/memory di Cloudflare Workers.
  */
 export async function sendImageToDiscord(
   token: string,
@@ -148,32 +152,10 @@ export async function sendImageToDiscord(
   caption?: string
 ): Promise<boolean> {
   try {
-    const res = await fetch(imageUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const contentType = res.headers.get("content-type") || "";
-    if (!contentType.includes("image")) throw new Error(`Bukan gambar: ${contentType}`);
-
-    const buf = await res.arrayBuffer();
-    const ext = contentType.split("/")[1] || "jpg";
-    const filename = `anime-${Date.now()}.${ext}`;
-
-    const formData = new FormData();
-    formData.append("files[0]", new Blob([buf], { type: contentType }), filename);
-
-    const payload: any = {};
-    if (caption) payload.content = caption.slice(0, 2000);
-    formData.append("payload_json", JSON.stringify(payload));
-
-    const result = await discordFetchFormData(token, channelId, formData);
-    return result !== null && result.ok;
+    // Kirim URL langsung — Discord akan auto-embed gambar
+    const content = caption ? `${caption}\n${imageUrl}` : imageUrl;
+    await sendDiscordMessage(token, channelId, content.slice(0, 2000));
+    return true;
   } catch (e: any) {
     console.warn(`⚠️ Send image gagal: ${e.message}`);
     return false;
@@ -215,8 +197,33 @@ interface MediaResult {
 export async function publishArticle(
   token: string,
   channelId: string,
-  article: Article
+  article: Article,
+  env: any
 ): Promise<PublishResult> {
+  // ═══ AUDIT: Quality gate sebelum publish ═══
+  // Fix C1: Integrasi article-auditor ke publish flow
+  const { article: auditedArticle, report: auditReport } = auditBeforePublish(article);
+  if (!auditReport.passed) {
+    console.warn(`⚠️ Audit warning: ${auditReport.summary}`);
+  }
+  // Pakai auditedArticle (sudah di-fix) untuk publish
+  article = auditedArticle;
+
+  // ═══ OPTIMIZE: Generate keyword optimal untuk media search ═══
+  // Fix C2: Integrasi media-query-optimizer ke publish flow
+  let optimizedQuery: OptimizedMediaQuery | null = null;
+  try {
+    optimizedQuery = await optimizeMediaQuery(
+      article.title || "",
+      (article.sections || []).map(s => s.heading || ""),
+      (article.sections || []).map(s => (s.body || "").slice(0, 200)),
+      env
+    );
+  } catch (e: any) {
+    console.warn(`⚠️ QueryOptimizer gagal: ${e.message} — pakai query lama`);
+  }
+
+  let sections = article.sections || [];
   const result: PublishResult = {
     success: true,
     sectionsPublished: 0,
@@ -225,7 +232,6 @@ export async function publishArticle(
   };
 
   try {
-    const sections = article.sections || [];
     if (sections.length === 0) {
       // Kirim headline sebagai bold message (konsisten, tanpa embed)
       await sendDiscordMessage(token, channelId, `**${(article.title || "📰 Artikel Anime").slice(0, 256)}**`);
@@ -235,7 +241,7 @@ export async function publishArticle(
       return result;
     }
 
-    const env = (globalThis as any).__LUMINA_ENV__;
+    // env passed directly from scheduler.ts
 
     // ═══ PHASE 1: PARALLEL — Kirim HEADLINE + Pre-fetch semua media ═══
     // HEADLINE dikirim sebagai bold MESSAGE (bukan embed) biar gak ada 2 header!
@@ -245,38 +251,98 @@ export async function publishArticle(
     for (let i = 0; i < sections.length; i++) {
       const sec = sections[i];
 
-      // Start video search
-      if (sec.video_query && sec.video_query.length > 3) {
+      // Video search — use optimized keywords (C2) + fallback to AI query
+      const videoQueries: string[] = [];
+      // Priority 1: Optimized video keywords dari media-query-optimizer
+      if (optimizedQuery?.video_keywords) {
+        for (const kw of optimizedQuery.video_keywords) {
+          if (kw && kw.length > 3 && !videoQueries.includes(kw)) videoQueries.push(kw);
+        }
+      }
+      // Priority 2: Original AI query sebagai fallback
+      if (sec.video_query && sec.video_query.length > 3 && !videoQueries.includes(sec.video_query)) {
+        videoQueries.push(sec.video_query);
+      }
+      // ALWAYS add catch-all query as backup (try all!)
+      if (article.title) {
+        const words = article.title.replace(/[^\w\s]/g,' ').trim().split(/\s+/).filter(w=>w.length>2);
+        const skip = ['baru','resmi','diumumkan','datang','rilis','tayang','film','movie','season','episode',
+          'new','announced','coming','release','latest','breaking','update','first','official','confirm',
+          'kabar','berita','trailer','teaser','pv','video'];
+        let name = words.find(w => !skip.includes(w.toLowerCase())) || words[0] || '';
+        name = name.slice(0, 30);
+        if (name.length > 2) {
+          const fallbackQuery = `${name} trailer`;
+          if (!videoQueries.includes(fallbackQuery)) videoQueries.push(fallbackQuery);
+        }
+      }
+      // Start video search — try each query until one works
+      if (videoQueries.length > 0) {
         mediaPromises.push(
           (async () => {
-            try {
-              const url = await findYouTubeVideo(sec.video_query, env);
-              return url ? { type: "video" as const, sectionIndex: i, url } : null;
-            } catch {
-              return null;
+            for (const q of videoQueries) {
+              try {
+                const url = await findYouTubeVideo(q, env);
+                if (url) {
+                  console.log(`🎬 Video found via: "${q}"`);
+                  return { type: "video" as const, sectionIndex: i, url };
+                }
+              } catch { continue; }
             }
+            return null;
           })()
         );
       }
 
-      // Start image search
-      if (sec.image_query && sec.image_query.length > 1) {
+      // Image search — use optimized keywords (C2) + fallback to AI query
+      const imageQueries: string[] = [];
+      // Priority 1: Optimized mal_title dari media-query-optimizer (exact match untuk MAL/AniList)
+      if (optimizedQuery?.mal_title && optimizedQuery.mal_title.length > 2) {
+        if (!imageQueries.includes(optimizedQuery.mal_title)) imageQueries.push(optimizedQuery.mal_title);
+      }
+      // Priority 2: Optimized image_keywords (alternatif judul)
+      if (optimizedQuery?.image_keywords) {
+        for (const kw of optimizedQuery.image_keywords) {
+          if (kw && kw.length > 2 && !imageQueries.includes(kw)) imageQueries.push(kw);
+        }
+      }
+      // Priority 3: Original AI query sebagai fallback
+      if (sec.image_query && sec.image_query.length > 1 && !imageQueries.includes(sec.image_query)) {
+        imageQueries.push(sec.image_query);
+      }
+      // ALWAYS add catch-all query as backup (try all!)
+      if (article.title) {
+        const words = article.title.replace(/[^\w\s]/g,' ').trim().split(/\s+/).filter(w=>w.length>2);
+        const skip = ['baru','resmi','diumumkan','datang','rilis','tayang','film','movie','season','episode',
+          'new','announced','coming','release','latest','breaking','update','first','official','confirm',
+          'kabar','berita','trailer','teaser','pv','video'];
+        let name = words.find(w => !skip.includes(w.toLowerCase())) || words[0] || '';
+        name = name.slice(0, 30);
+        if (name.length > 2) {
+          if (!imageQueries.includes(name)) imageQueries.push(name);
+          const kv = `${name} key visual`;
+          if (!imageQueries.includes(kv)) imageQueries.push(kv);
+        }
+      }
+      // Start image search — try each query until one works
+      if (imageQueries.length > 0) {
         mediaPromises.push(
           (async () => {
-            try {
-              const img = await searchAnimeImage(sec.image_query, { env });
-              if (img) {
-                return {
-                  type: "image" as const,
-                  sectionIndex: i,
-                  url: img.url,
-                  caption: `${sec.heading || "📖"} — ${img.source}`,
-                };
-              }
-              return null;
-            } catch {
-              return null;
+            for (const q of imageQueries) {
+              try {
+                const img = await searchAnimeImage(q, { env });
+                if (img) {
+                  console.log(`📸 Image found via: "${q}" → ${img.source}`);
+                  return {
+                    type: "image" as const,
+                    sectionIndex: i,
+                    url: img.url,
+                    caption: `${sec.heading || "📖"} — ${img.source}`,
+                  };
+                }
+              } catch { continue; }
             }
+            return null;
           })()
         );
       }

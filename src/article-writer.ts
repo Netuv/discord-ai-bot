@@ -176,8 +176,8 @@ export function buildArticlePrompt(
     `  "sections": [{\n` +
     `    "heading": "🔍 Sub-judul",\n` +
     `    "body": "Narasi 4-6 kalimat. Santai, mengalir, bukan poin-poin!",\n` +
-    `    "image_query": "Kata kunci gambar spesifik (atau kosongkan)",\n` +
-    `    "video_query": "Kata kunci video/trailer YouTube (atau kosongkan)"\n` +
+    `    "image_query": "WAJIB DIISI! Keyword gambar: judul anime + key visual/poster + tahun",\n` +
+    `    "video_query": "WAJIB DIISI! Keyword video: judul anime + trailer/PV/teaser + tahun"\n` +
     `  }],\n` +
     `  "category": "anime/manga/game/breaking/announcement/general"\n` +
     `}\n` +
@@ -345,7 +345,7 @@ export async function generateArticle(
       `{\n` +
       `  "title": "[Emoji] Judul",\n` +
       `  "intro": "Hook 2 kalimat",\n` +
-      `  "sections": [{"heading":"📖 Sub-judul","body":"Narasi singkat 3-4 kalimat","image_query":"","video_query":""}],\n` +
+      `  "sections": [{"heading":"📖 Sub-judul","body":"Narasi singkat 3-4 kalimat","image_query":"judul anime key visual","video_query":"judul anime trailer"}],\n` +
       `  "category": "anime"\n` +
       `}\n` +
       `Gaya santai, tanpa kesimpulan. JANGAN tambah teks lain!`

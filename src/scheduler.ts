@@ -13,9 +13,9 @@
 
 import { AiRouter } from "./ai-router";
 import { WebScout } from "./web-scout";
-import { searchAnimeImage, downloadImage } from "./image-scraper";
-import { findYouTubeVideo as videoScraperFindVideo } from "./video-scraper";
-import { researchArticle, generateArticle, parseArticleJSON, buildArticlePrompt, getArticleColor, generateFallbackArticle } from "./article-writer";
+
+
+import { researchArticle, generateArticle, generateFallbackArticle } from "./article-writer";
 import { publishArticle } from "./article-publisher";
 import { turboHeavyArticle } from "./turbo-helper";
 
@@ -453,35 +453,47 @@ export async function executeAiArticle(
     console.warn(`⚠️ Research gagal (lanjut tanpa data): ${e.message}`);
   }
 
-  // ═══ STEP 2: AI GENERATE via article-writer ════════════
-  // Ada 3 attempt + 1 fallback hardcoded
+  // ═══ STEP 2: AI GENERATE — PARALLEL (Worker + Turbo race) ═══
+  // Jalankan Worker AI generate & Turbo Layer BERSAMAAN.
+  // Dulu sequential: Worker (30-60s) → Turbo (0-55s) = TOTAL 85-115s ❌
+  // Sekarang parallel: max(Worker, Turbo) = paling lama ~45s ✅
   let article: any;
-  try {
-    article = await generateArticle(topic, research, env);
-  } catch (e: any) {
-    console.error(`❌ [ai-article] Semua attempt gagal: ${e.message}`);
-    article = generateFallbackArticle(topic);
-  }
 
-  // ═══ TRY TURBO LAYER (optional 2nd layer) ════════════
-  // Coba Turbo Layer dulu — kalau valid, override article dari Worker
-  // Kalau gagal → silent fallback, tetap pakai article existing
-  try {
-    const turboArticle = await turboHeavyArticle(env, topic, research);
-    if (turboArticle && turboArticle.title && Array.isArray(turboArticle.sections) && turboArticle.sections.length > 0) {
-      console.log(`✅ [Turbo] Artikel valid dari Turbo Layer, override Worker article`);
-      article = turboArticle;
+  // Start both in parallel
+  const workerArticlePromise = (async () => {
+    try {
+      return await generateArticle(topic, research, env);
+    } catch (e: any) {
+      console.warn(`⚠️ Worker article gagal: ${e.message}`);
+      return generateFallbackArticle(topic);
     }
-  } catch (e: any) {
-    // Silent fallback — Worker article tetap dipakai
-    console.log(`ℹ️ [Turbo] Tidak tersedia, lanjut pakai article dari Worker`);
+  })();
+
+  const turboArticlePromise = (async () => {
+    try {
+      const t = await turboHeavyArticle(env, topic, research);
+      if (t && t.title && Array.isArray(t.sections) && t.sections.length > 0) {
+        return t;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  })();
+
+  // Wait for both — prefer Turbo if valid
+  const [workerArticle, turboArticle] = await Promise.all([workerArticlePromise, turboArticlePromise]);
+  if (turboArticle) {
+    article = turboArticle;
+    console.log(`✅ [Turbo] Artikel dari Turbo Layer override Worker`);
+  } else {
+    article = workerArticle;
+    console.log(`ℹ️ Worker article dipakai (Turbo tidak valid/gagal)`);
   }
 
   // ═══ STEP 3-4: PUBLISH ke Discord via article-publisher ══
-  // Set env global utk dipake publisher (video & image search)
-  (globalThis as any).__LUMINA_ENV__ = env;
-
-  const pubResult = await publishArticle(token, channelId, article);
+  // Pass env LANGSUNG ke publishArticle, bukan via globalThis!
+  const pubResult = await publishArticle(token, channelId, article, env);
 
   if (!pubResult.success) {
     return `⚠️ Artikel gagal dikirim: ${pubResult.error}`;

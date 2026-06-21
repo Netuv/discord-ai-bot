@@ -1147,8 +1147,37 @@ const tools: ToolDefinition[] = [
       required: ["prompt"],
     },
     handler: async ({ prompt }) => ({
-      content: [{ type: "text", text: sanitizeForDiscord(await aiPrompt("Kamu adalah asisten AI yang cerdas dan membantu. Jawab dengan bahasa Indonesia. Gunakan format Markdown Discord: **bold**, *italic*, \`kode\`, > quote. JANGAN pakai HTML.", prompt)) }],
+      content: [{ type: "text", text: sanitizeForDiscord(await aiPrompt("Kamu adalah asisten AI yang cerdas dan membantu. Jawab dengan bahasa Indonesia. Gunakan format Markdown Discord: **bold**, *italic*, `kode`, > quote. JANGAN pakai HTML.", prompt)) }],
     }),
+  },
+  {
+    name: "vision-ocr",
+    description: "📸 Analisis gambar/OCR via AI Vision — Xiaomi MiMo V2.5 → fallback Llama. Modular vision tool!",
+    inputSchema: {
+      type: "object",
+      properties: {
+        image_url: { type: "string", description: "URL gambar yang akan dianalisis" },
+        pertanyaan: { type: "string", description: "Pertanyaan tentang gambar (OCR, deskripsi, deteksi objek)", default: "Jelaskan apa yang ada di gambar ini secara detail" },
+      },
+      required: ["image_url"],
+    },
+    handler: async ({ image_url, pertanyaan }) => {
+      try {
+        const router = getAiRouter();
+        const result = await router.visionChat([
+          {
+            role: "user",
+            content: [
+              { type: "text", text: pertanyaan || "Jelaskan apa yang ada di gambar ini secara detail" },
+              { type: "image", image: image_url },
+            ],
+          },
+        ]);
+        return { content: [{ type: "text", text: sanitizeForDiscord(result) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `❌ Vision error: ${e.message}` }] };
+      }
+    },
   },
   {
     name: "translate",
@@ -4351,7 +4380,7 @@ ${modelLines}`,
 
         // ═══ PUBLISH — paralel otomatis di dalam publishArticle ═══
         (globalThis as any).__LUMINA_ENV__ = env;
-        const pubResult = await publishArticle(token, channelId, article);
+        const pubResult = await publishArticle(token, channelId, article, getEnv());
 
         if (!pubResult.success) {
           return { content: [{ type: "text", text: `❌ Artikel gagal dikirim: ${pubResult.error}` }] };

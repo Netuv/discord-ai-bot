@@ -1,5 +1,5 @@
 /**
- * turbo-helper.ts — HTTP Client ke Turbo Layer (Koyeb)
+ * turbo-helper.ts — HTTP Client ke Turbo Layer (Vercel/Koyeb)
  * 
  * Semua fungsi opsional: return null kalau gagal, TIDAK PERNAH throw.
  * Kalau env.TURBO_SERVICE_URL tidak diset → semua fungsi return null.
@@ -7,10 +7,13 @@
  * Fungsi:
  * - callTurbo()           — Generic POST ke endpoint Turbo
  * - turboChat()           — Chat AI via Turbo (heavy lifting)
- * - turboHeavyArticle()   — Generate artikel via Turbo
+ * - turboHeavyArticle()   — Generate artikel via Turbo (build prompt lokal)
  * - turboDiscordFollowup()— Kirim follow-up ke Discord via Turbo
  * - isTurboAlive()        — Health check Turbo server
  * - discordFollowupDirect() — Kirim follow-up LANGSUNG (tanpa Turbo proxy)
+ *
+ * H1 (2026-06-21): Prompt building & JSON parsing di Worker (src/article-writer.ts).
+ * Turbo Layer jadi simple AI proxy tanpa duplikasi article logic.
  */
 
 // ─── Generic Call ─────────────────────────────────────────
@@ -28,18 +31,16 @@ async function callTurbo(env: any, endpoint: string, payload: any): Promise<any 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(55000), // 55 detik — lebih dari cukup
+      signal: AbortSignal.timeout(120000), // 120 detik — Vercel kadang slow
     });
 
     if (!res.ok) {
-      // Logging minimal — biar keliatan di Worker logs
       console.warn(`[Turbo] ${endpoint} HTTP ${res.status}`);
       return null;
     }
 
     return await res.json();
   } catch (e: any) {
-    // Silent fallback — gak pernah throw
     console.warn(`[Turbo] ${endpoint} error: ${e.message}`);
     return null;
   }
@@ -47,10 +48,6 @@ async function callTurbo(env: any, endpoint: string, payload: any): Promise<any 
 
 // ─── Chat via Turbo ──────────────────────────────────────
 
-/**
- * Chat dengan AI via Turbo Layer.
- * Return string response atau null.
- */
 export async function turboChat(
   env: any,
   messages: Array<{ role: string; content: string }>,
@@ -66,42 +63,59 @@ export async function turboChat(
 // ─── Heavy Article via Turbo ─────────────────────────────
 
 /**
- * Generate artikel berat via Turbo Layer.
- * Return parsed Article object atau null.
+ * Generate artikel via Turbo Layer.
+ * H1: Build prompt LOKAL (src/article-writer.ts), kirim prompt ke Turbo proxy.
+ * Turbo hanya call AI + return raw content. Worker yang parse JSON.
  */
 export async function turboHeavyArticle(
   env: any,
   topic: string,
   research: { summary?: string; reviewSummary?: string }
 ): Promise<any | null> {
-  const result = await callTurbo(env, "/article/heavy", {
-    topic,
-    research: {
-      summary: research.summary || "",
-      reviewSummary: research.reviewSummary || "",
-    },
-  });
+  // Import dari article-writer.ts (singleton — Workers bundle at deploy time)
+  const mod = await import("./article-writer");
+  const buildArticlePrompt = mod.buildArticlePrompt;
+  const parseArticleJSON = mod.parseArticleJSON;
 
-  // Validasi minimal — harus punya title & sections
-  if (
-    result &&
-    !result.error &&
-    typeof result.title === "string" &&
-    Array.isArray(result.sections) &&
-    result.sections.length > 0
-  ) {
-    return result;
+  try {
+    // Build prompt local — no duplication!
+    const prompt = buildArticlePrompt(
+      topic,
+      research.summary || "Gunakan pengetahuan umum.",
+      research.reviewSummary || ""
+    );
+
+    // Kirim prompt ke Turbo's /article/heavy sebagai messages[]
+    const result = await callTurbo(env, "/article/heavy", {
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    if (!result || !result.content) return null;
+
+    // Parse response LOCAL — Worker yang handle, bukan Turbo
+    try {
+      const article = parseArticleJSON(result.content);
+      if (
+        article &&
+        article.title &&
+        Array.isArray(article.sections) &&
+        article.sections.length > 0
+      ) {
+        return article;
+      }
+    } catch (e: any) {
+      console.warn(`[Turbo] Parse artikel gagal: ${e.message}`);
+    }
+
+    return null;
+  } catch (e: any) {
+    console.warn(`[Turbo] HeavyArticle error: ${e.message}`);
+    return null;
   }
-
-  return null;
 }
 
-// ─── Discord Follow-up via Turbo Proxy ──────────────────
+// ─── Discord Follow-up via Turbo ─────────────────────────
 
-/**
- * Kirim follow-up ke Discord via Turbo proxy.
- * Return true/false.
- */
 export async function turboDiscordFollowup(
   env: any,
   applicationId: string,
@@ -118,23 +132,14 @@ export async function turboDiscordFollowup(
 
 // ─── Direct Discord Follow-up ─────────────────────────────
 
-/**
- * Kirim follow-up LANGSUNG ke Discord (tanpa proxy Turbo).
- * PATCH ke webhook: /webhooks/{appId}/{intToken}/messages/@original
- * Discord webhook URL sudah termasuk auth — gak perlu Bot token.
- * 
- * Return true kalau sukses.
- */
 export async function discordFollowupDirect(
   applicationId: string,
   interactionToken: string,
   content: string
 ): Promise<boolean> {
-  // Potong per 2000 karakter (Discord limit)
   const chunks = chunkTextForDiscord(content, 2000);
 
   try {
-    // PATCH chunk pertama — edit pesan original
     const res = await fetch(
       `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`,
       {
@@ -147,7 +152,6 @@ export async function discordFollowupDirect(
 
     if (!res.ok) return false;
 
-    // POST chunk sisanya sebagai follow-up messages
     for (let i = 1; i < chunks.length; i++) {
       await fetch(
         `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}`,
@@ -168,10 +172,6 @@ export async function discordFollowupDirect(
 
 // ─── Health Check ─────────────────────────────────────────
 
-/**
- * Cek apakah Turbo server hidup.
- * Return boolean.
- */
 export async function isTurboAlive(env: any): Promise<boolean> {
   const baseUrl = env.TURBO_SERVICE_URL;
   if (!baseUrl) return false;

@@ -11,7 +11,7 @@
  * - `openai` — OpenAI-compatible API (NVIDIA NIM, OpenRouter, OpenCode, dll)
  *
  * Vision support:
- * - `callCloudflareVision()` — Kirim gambar + teks ke model vision (Llama 4 Scout, dll)
+ * - `callCloudflareVision()` — Kirim gambar + teks ke model vision (Xiaomi MiMo V2.5, Llama 3.2 90B Vision, dll)
  * - `callOpenAIVision()` — Kirim gambar + teks ke OpenAI-compatible vision API
  *
  * Setup:
@@ -57,30 +57,45 @@ export interface VisionMessage {
   content: string | VisionContentPart[];
 }
 
-// ─── Default Providers ────────────────────────────────────
+// ─── Default Providers (untuk Chat / AI Writer) — 4 Layer ──
+// Priority: OpenCode -> Step 3.7 Flash (NVIDIA) -> Cloudflare -> OpenRouter
+//
+// 🆓 OpenCode: deepseek-v4-flash-free — gratis, recommended buat nulis artikel
+// 🟢 Step 3.7 Flash: 198B MoE via NVIDIA NIM (free tier) — layer 2 fallback
+// 🌤️ Cloudflare: built-in AI binding, fallback andalan
+// 🟣 OpenRouter: butuh API key (gratis daftar di openrouter.ai)
 
 const defaultProviders: AiProvider[] = [
-  // Priority 1: Cloudflare Workers AI (gratis, built-in)
+  // Priority 1: OpenCode — deepseek-v4-flash-free (GRATIS! 🆓)
   {
-    name: "Cloudflare Workers AI",
+    name: "OpenCode",
     priority: 1,
-    model: "@cf/meta/llama-4-scout-17b-16e-instruct",
-    type: "cloudflare",
+    model: "deepseek-v4-flash-free",
+    type: "openai",
+    apiKeyEnv: "OPENCODE_API_KEY",
+    baseUrl: "https://opencode.ai/zen/v1",
   },
-  // Priority 2: NVIDIA NIM (gratis — butuh API key)
+  // Priority 2: Step 3.7 Flash — 198B MoE via NVIDIA NIM (free tier)
   {
-    name: "NVIDIA NIM",
+    name: "Step 3.7 Flash",
     priority: 2,
-    model: "meta/llama-3.1-8b-instruct",
+    model: "stepfun-ai/step-3.7-flash",
     type: "openai",
     apiKeyEnv: "NVIDIA_API_KEY",
     baseUrl: "https://integrate.api.nvidia.com/v1",
   },
-  // Priority 3: OpenRouter (gratis — butuh API key)
+  // Priority 3: Cloudflare Workers AI (built-in, selalu available)
+  {
+    name: "Cloudflare Workers AI",
+    priority: 3,
+    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    type: "cloudflare",
+  },
+  // Priority 4: OpenRouter (gratis — butuh API key)
   {
     name: "OpenRouter",
-    priority: 3,
-    model: "meta-llama/llama-4-scout:free",
+    priority: 4,
+    model: "meta-llama/llama-3.3-70b-instruct:free",
     type: "openai",
     apiKeyEnv: "OPENROUTER_API_KEY",
     baseUrl: "https://openrouter.ai/api/v1",
@@ -89,23 +104,48 @@ const defaultProviders: AiProvider[] = [
       "X-Title": "Discord AI Bot",
     },
   },
-  // Priority 4: OpenCode (gratis — butuh API key)
+];
+
+// ─── Default Vision Providers (modular, untuk OCR/vision tasks) ───
+// Terpisah dari chat providers — biar gak campur aduk!
+// Priority: Xiaomi MiMo V2.5 (via OpenRouter) -> Cloudflare Llama 3.2 90B Vision -> OpenRouter Gemma 3 12B
+//
+// 📸 Xiaomi MiMo V2.5 — native omnimodal (image, video, audio) via OpenRouter
+// 👁️ Cloudflare Llama 3.2 90B Vision — dedicated vision model
+
+const defaultVisionProviders: AiProvider[] = [
+  // Priority 1: Xiaomi MiMo V2.5 (native omnimodal — vision, video, audio)
   {
-    name: "OpenCode",
-    priority: 4,
-    model: "deepseek-v4-flash-free",
+    name: "Xiaomi MiMo V2.5",
+    priority: 1,
+    model: "xiaomi/mimo-v2.5",
     type: "openai",
-    apiKeyEnv: "OPENCODE_API_KEY",
-    baseUrl: "https://opencode.ai/zen/v1",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    baseUrl: "https://openrouter.ai/api/v1",
+    extraHeaders: {
+      "HTTP-Referer": "https://github.com/Netuv/discord-ai-bot",
+      "X-Title": "Discord AI Bot — Vision",
+    },
   },
-  // Priority 5: Generic OpenAI-compatible (custom)
+  // Priority 2: Cloudflare Llama 3.2 90B Vision (dedicated vision model)
   {
-    name: "Custom OpenAI",
-    priority: 5,
-    model: "gpt-4o-mini",
+    name: "Cloudflare Vision",
+    priority: 2,
+    model: "@cf/meta/llama-3.2-90b-vision-instruct",
+    type: "cloudflare",
+  },
+  // Priority 3: OpenRouter free vision fallback (Gemma 3 12B)
+  {
+    name: "OpenRouter Vision",
+    priority: 4,
+    model: "google/gemma-3-12b-it:free",
     type: "openai",
-    apiKeyEnv: "CUSTOM_OPENAI_API_KEY",
-    baseUrl: "https://api.openai.com/v1",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    baseUrl: "https://openrouter.ai/api/v1",
+    extraHeaders: {
+      "HTTP-Referer": "https://github.com/Netuv/discord-ai-bot",
+      "X-Title": "Discord AI Bot — Vision",
+    },
   },
 ];
 
@@ -120,15 +160,37 @@ export interface ProviderModelInfo {
 }
 
 export const defaultProviderModels: ProviderModelInfo[] = [
+  // ── CHAT / WRITER PROVIDERS (Priority order) ──
+  {
+    name: "OpenCode",
+    emoji: "🔵",
+    secret: "OPENCODE_API_KEY",
+    note: "🇩🇪 #1 Priority Writer — deepseek-v4-flash-free (GRATIS 🆓)",
+    models: [
+      { name: "deepseek-v4-flash-free", note: "✅ Default Writer (FREE) 🆓" },
+      { name: "deepseek-v4-flash", note: "" },
+      { name: "deepseek-v4-pro", note: "" },
+      { name: "big-pickle", note: "FREE 🆓" },
+    ],
+  },
+  {
+    name: "Step 3.7 Flash",
+    emoji: "🟢",
+    secret: "NVIDIA_API_KEY",
+    note: "#2 Priority — 198B MoE via NVIDIA NIM (free tier)",
+    models: [
+      { name: "stepfun-ai/step-3.7-flash", note: "✅ Default Layer 2 🆓" },
+    ],
+  },
   {
     name: "Cloudflare Workers AI",
     emoji: "🌤️",
-    note: "Built-in — tanpa setup",
+    note: "#3 Priority — Built-in, tanpa setup",
     models: [
-      { name: "@cf/meta/llama-4-scout-17b-16e-instruct", note: "Default 👁️" },
+      { name: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", note: "🚀 Fast & Reliable" },
       { name: "@cf/meta/llama-3.1-8b-instruct", note: "" },
       { name: "@cf/meta/llama-3.2-3b-instruct", note: "" },
-      { name: "@cf/meta/llama-3.2-90b-vision-instruct", note: "👁️" },
+      { name: "@cf/meta/llama-3.2-90b-vision-instruct", note: "👁️ Vision" },
       { name: "@cf/mistral/mistral-7b-instruct-v0.1", note: "" },
       { name: "@cf/microsoft/phi-3-mini-4k-instruct", note: "" },
       { name: "@cf/qwen/qwen2-72b-instruct", note: "" },
@@ -136,28 +198,14 @@ export const defaultProviderModels: ProviderModelInfo[] = [
     ],
   },
   {
-    name: "NVIDIA NIM",
-    emoji: "🟢",
-    secret: "NVIDIA_API_KEY",
-    note: "Daftar di build.nvidia.com — 121+ model",
-    models: [
-      { name: "meta/llama-3.1-8b-instruct", note: "Default" },
-      { name: "google/gemma-3-12b-it", note: "" },
-      { name: "google/gemma-3-4b-it", note: "" },
-      { name: "google/gemma-4-31b-it", note: "" },
-      { name: "deepseek-ai/deepseek-coder-6.7b-instruct", note: "" },
-      { name: "mistralai/mistral-7b-instruct-v0.3", note: "" },
-      { name: "microsoft/phi-3-mini-4k-instruct", note: "" },
-    ],
-  },
-  {
     name: "OpenRouter",
     emoji: "🟣",
     secret: "OPENROUTER_API_KEY",
-    note: "Daftar di openrouter.ai — 23+ model gratis",
+    note: "#4 Priority — Daftar di openrouter.ai",
     models: [
       { name: "meta-llama/llama-3.3-70b-instruct:free", note: "Default" },
       { name: "meta-llama/llama-3.2-3b-instruct:free", note: "" },
+      { name: "meta-llama/llama-3.3-70b-instruct:free", note: "" },
       { name: "google/gemma-4-31b-it:free", note: "" },
       { name: "google/gemma-4-26b-a4b-it:free", note: "" },
       { name: "qwen/qwen3-coder:free", note: "" },
@@ -168,16 +216,23 @@ export const defaultProviderModels: ProviderModelInfo[] = [
       { name: "openai/gpt-oss-120b:free", note: "" },
     ],
   },
+  // ── VISION / OCR PROVIDERS (modular tools, terpisah!) ──
   {
-    name: "OpenCode",
-    emoji: "🔵",
-    secret: "OPENCODE_API_KEY",
-    note: "Daftar di opencode.ai/zen",
+    name: "Xiaomi MiMo V2.5",
+    emoji: "📸",
+    secret: "OPENROUTER_API_KEY",
+    note: "#1 Vision/OCR — Native omnimodal via OpenRouter",
     models: [
-      { name: "deepseek-v4-flash-free", note: "Default (FREE) 🆓" },
-      { name: "deepseek-v4-flash", note: "" },
-      { name: "deepseek-v4-pro", note: "" },
-      { name: "big-pickle", note: "FREE 🆓" },
+      { name: "xiaomi/mimo-v2.5", note: "✅ Default Vision (multimodal) 📸" },
+      { name: "xiaomi/mimo-v2.5-pro", note: "🚀 Pro (lebih kuat)" },
+    ],
+  },
+  {
+    name: "Cloudflare Vision",
+    emoji: "👁️",
+    note: "#2 (after MiMo V2.5) — Built-in, gratis",
+    models: [
+      { name: "@cf/meta/llama-3.2-90b-vision-instruct", note: "✅ Default Vision 👁️" },
     ],
   },
 ];
@@ -186,16 +241,17 @@ export const defaultProviderModels: ProviderModelInfo[] = [
 
 class AiRouter {
   private config: AiRouterConfig;
+  private visionConfig: AiRouterConfig; // Vision provider — modular, terpisah!
   private env: any;
 
   constructor(env: any, config?: Partial<AiRouterConfig>) {
     this.env = env;
 
-    // Filter provider: hanya yang punya API key (jika dibutuhkan) atau built-in
+    // ── Chat / Writer Providers ──
     const availableProviders = defaultProviders.filter((p) => {
       if (p.type === "cloudflare") return true; // Built-in, selalu available
-      if (!p.apiKeyEnv) return false; // Butuh key tapi ga disebut
-      return !!env[p.apiKeyEnv]; // Hanya jika secret-nya ada
+      if (!p.apiKeyEnv) return false;
+      return !!env[p.apiKeyEnv];
     });
 
     this.config = {
@@ -208,6 +264,19 @@ class AiRouter {
     if (this.config.providers.length === 0) {
       console.warn("⚠️ Tidak ada AI provider yang tersedia!");
     }
+
+    // ── Vision / OCR Providers (modular, terpisah dari chat!) ──
+    const availableVisionProviders = defaultVisionProviders.filter((p) => {
+      if (p.type === "cloudflare") return true;
+      if (!p.apiKeyEnv) return false;
+      return !!env[p.apiKeyEnv];
+    });
+
+    this.visionConfig = {
+      providers: availableVisionProviders,
+      timeoutMs: 40000, // Vision butuh timeout lebih lama
+      maxRetriesPerProvider: 1,
+    };
   }
 
   /**
@@ -365,8 +434,13 @@ class AiRouter {
   // ─── Vision / Multimodal ────────────────────────────────
 
   /**
-   * Chat dengan VISION — kirim gambar + teks, dapatkan analisis AI.
-   * Auto-failover: coba Cloudflare Vision dulu, fallback ke OpenAI Vision.
+   * Chat dengan VISION / OCR — kirim gambar + teks, dapatkan analisis AI.
+   * MODULAR: pake `defaultVisionProviders` terpisah dari chat providers.
+   *
+   * Priority:
+   *   1️⃣ Xiaomi MiMo V2.5 (native omnimodal via OpenRouter)
+   *   2️⃣ Cloudflare Llama 3.2 90B Vision (dedicated vision)
+   *   3️⃣ OpenRouter free vision fallback (Gemma 3 12B)
    *
    * Contoh:
    * ```ts
@@ -379,20 +453,10 @@ class AiRouter {
    * ```
    */
   async visionChat(messages: VisionMessage[], options?: { model?: string; providerName?: string }): Promise<string> {
-    if (this.config.providers.length === 0) {
-      throw new Error("Tidak ada AI provider yang tersedia.");
-    }
-
-    // Prioritaskan provider yang support vision
-    const visionProviders = this.config.providers.filter((p) => {
-      // Cloudflare AI: Llama 4 Scout support vision
-      if (p.type === "cloudflare") return true;
-      // OpenAI-compatible: GPT-4o, Gemini, dll support vision
-      return true;
-    });
+    const visionProviders = this.visionConfig.providers;
 
     if (visionProviders.length === 0) {
-      throw new Error("Tidak ada provider vision yang tersedia.");
+      throw new Error("Tidak ada vision provider yang tersedia. Set OPENROUTER_API_KEY atau pastikan AI binding aktif.");
     }
 
     if (options?.providerName) {
@@ -408,7 +472,7 @@ class AiRouter {
       }
     }
 
-    // Auto-failover
+    // Auto-failover: priority 1 → 2 → 3 → 4
     const sorted = [...visionProviders].sort((a, b) => a.priority - b.priority);
     let lastError = "";
 
@@ -417,6 +481,7 @@ class AiRouter {
         return await this.callVisionProvider(provider, messages, options);
       } catch (e: any) {
         lastError = `${provider.name}: ${e.message}`;
+        console.warn(`⚠️ Vision provider ${provider.name} gagal: ${e.message}`);
       }
     }
 

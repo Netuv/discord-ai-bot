@@ -382,6 +382,134 @@ async function searchGoogleImages(
   }
 }
 
+// ─── DuckDuckGo Image Search (GRATIS! 🆓) ─────────────────
+// DuckDuckGo punya image search endpoint yang GRATIS tanpa API key.
+// Bisa cari keyword DESKRIPTIF kayak "key visual" atau "poster"!
+//
+// Flow:
+// 1. GET main DuckDuckGo → extract VQD token
+// 2. GET i.js dengan VQD → dapat array image URLs
+// 3. Filter & validasi URL gambar
+//
+// Rate limit: longgar (lebih baik dari Google API)
+// Cache: pake KV biar gak request berulang
+
+interface DuckDuckGoImageResult {
+  url: string;
+  title: string;
+  height: number;
+  width: number;
+  source: string;
+}
+
+async function searchDuckDuckGoImages(
+  query: string,
+  maxResults: number = 5
+): Promise<DuckDuckGoImageResult[]> {
+  const results: DuckDuckGoImageResult[] = [];
+  const encodedQuery = encodeURIComponent(query);
+
+  try {
+    // Step 1: Dapetin VQD token dari halaman utama DuckDuckGo
+    console.log(`🦆 DuckDuckGo: dapatkan VQD token untuk "${query}"`);
+    const vqdRes = await fetch(
+      `https://duckduckgo.com/?q=${encodedQuery}&t=h_&iax=images&ia=images`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+
+    if (!vqdRes.ok) {
+      console.warn(`⚠️ DuckDuckGo VQD HTTP ${vqdRes.status}`);
+      return [];
+    }
+
+    const html = await vqdRes.text();
+
+    // Extract VQD token dari HTML — bentuknya: vqd=('|")xxxxx('|")
+    let vqd = "";
+    const vqdMatch = html.match(/vqd=([\d-]+)&/);
+    if (vqdMatch && vqdMatch[1]) {
+      vqd = vqdMatch[1];
+    } else {
+      // Fallback: coba regex lain
+      const vqdMatch2 = html.match(/"vqd":"([^"]+)"/);
+      if (vqdMatch2 && vqdMatch2[1]) {
+        vqd = vqdMatch2[1];
+      } else {
+        console.warn(`⚠️ DuckDuckGo: VQD token tidak ditemukan di HTML`);
+        return [];
+      }
+    }
+
+    console.log(`🦆 DuckDuckGo: VQD token didapat (${vqd.length} chars)`);
+
+    // Step 2: Fetch image JSON results pake VQD
+    const imgRes = await fetch(
+      `https://duckduckgo.com/i.js?q=${encodedQuery}&o=json&vqd=${vqd}&p=1&f=,,,&l=us-en`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Referer: "https://duckduckgo.com/",
+          Accept: "application/json, text/plain, */*",
+        },
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+
+    if (!imgRes.ok) {
+      const errText = await imgRes.text().catch(() => "unknown");
+      console.warn(`⚠️ DuckDuckGo Images HTTP ${imgRes.status}: ${errText.slice(0, 200)}`);
+      return [];
+    }
+
+    const data: any = await imgRes.json();
+    const items: any[] = data.results || [];
+
+    console.log(`🦆 DuckDuckGo: ${items.length} image results for "${query}"`);
+
+    for (const item of items.slice(0, maxResults)) {
+      const imageUrl = item.image || item.thumbnail;
+      if (!imageUrl) continue;
+
+      // Validasi: harus URL http/https
+      if (!imageUrl.startsWith("http")) continue;
+
+      // Validasi: harus ekstensi gambar
+      const ext = imageUrl.split("?").shift()?.split(".").pop()?.toLowerCase() || "";
+      if (!["jpg", "jpeg", "png", "gif", "webp", "avif", "bmp"].includes(ext)) {
+        // Beberapa URL gak pake ekstensi — tetap coba
+      }
+
+      results.push({
+        url: imageUrl,
+        title: item.title || query,
+        height: item.height || 0,
+        width: item.width || 0,
+        source: item.source || "DuckDuckGo",
+      });
+    }
+
+    // Sort by image size (prefer larger images)
+    results.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+  } catch (e: any) {
+    console.warn(`⚠️ DuckDuckGo Images error: ${e.message}`);
+  }
+
+  if (results.length > 0) {
+    console.log(`🦆 DuckDuckGo: ${results.length} valid images untuk "${query}"`);
+  }
+
+  return results;
+}
+
 // ─── Wikipedia API (gratis, tanpa API key) ────────────────
 
 interface WikipediaSearchResult {
@@ -617,6 +745,7 @@ export async function searchAnimeImage(
     redditResults,
     rssResults,
     googleResults,
+    duckduckgoResults,
   ] = await Promise.allSettled([
     // Source 1: Kitsu
     searchKitsu(query),
@@ -640,6 +769,8 @@ export async function searchAnimeImage(
     env?.GOOGLE_SEARCH_API_KEY && env?.GOOGLE_SEARCH_ENGINE_ID
       ? searchGoogleImages(query, env.GOOGLE_SEARCH_API_KEY, env.GOOGLE_SEARCH_ENGINE_ID)
       : Promise.resolve([]),
+    // Source 9: DuckDuckGo Images (GRATIS! 🆓)
+    searchDuckDuckGoImages(query, 5),
   ]);
 
   const elapsed = Date.now() - t0;
@@ -758,6 +889,27 @@ export async function searchAnimeImage(
     if (score >= minScore && item.image) {
       allResults.push({ url: item.image, title: item.title, source: "Google Images", score, type: "anime" });
     }
+  }
+
+  // ── Process DuckDuckGo Images (SEARCH ENGINE PRIORITY! 🔥) ──
+  // DuckDuckGo bisa cari keyword DESKRIPTIF — gak perlu judul anime exact!
+  // Contoh: "Demon Slayer key visual" → dapet gambar padahal bukan judul anime.
+  //
+  // PRIORITAS: DuckDuckGo SELALU ditambahkan (gak peduli MAL/AniList ada atau tidak).
+  // Score 75 — cukup tinggi buat bersaing, akurasi gambar dari search engine.
+  const duckduckgoData = duckduckgoResults.status === "fulfilled" ? duckduckgoResults.value : [];
+  if (duckduckgoData.length > 0) {
+    for (const item of duckduckgoData) {
+      allResults.push({
+        url: item.url,
+        title: item.title || query,
+        source: `DuckDuckGo — ${item.source || "images"}`,
+        score: 75,
+        type: "anime",
+        description: `DuckDuckGo result: ${item.width}x${item.height}`,
+      });
+    }
+    console.log(`🦆 DuckDuckGo: ${duckduckgoData.length} images added (score:75, search engine priority)`);
   }
 
   // ── SAFE EARLY EXIT: 2+ source setuju + title sama + score ≥70 ──
