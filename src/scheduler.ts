@@ -17,6 +17,7 @@ import { searchAnimeImage, downloadImage } from "./image-scraper";
 import { findYouTubeVideo as videoScraperFindVideo } from "./video-scraper";
 import { researchArticle, generateArticle, parseArticleJSON, buildArticlePrompt, getArticleColor, generateFallbackArticle } from "./article-writer";
 import { publishArticle } from "./article-publisher";
+import { renderHeavyArticle } from "./render-helper";
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -228,6 +229,13 @@ export async function addTaskLog(env: any, log: TaskLogEntry): Promise<void> {
   }
   
   await env.SCHEDULER_KV.put(logKey, JSON.stringify(logs));
+}
+
+export async function clearAllTasks(env: any): Promise<number> {
+  const tasks = await getTasks(env);
+  const count = tasks.length;
+  await saveTasks(env, []);
+  return count;
 }
 
 export async function getTaskLogs(env: any, taskId: string): Promise<TaskLogEntry[]> {
@@ -453,6 +461,20 @@ export async function executeAiArticle(
   } catch (e: any) {
     console.error(`❌ [ai-article] Semua attempt gagal: ${e.message}`);
     article = generateFallbackArticle(topic);
+  }
+
+  // ═══ TRY RENDER (optional 2nd layer) ═══════════════════
+  // Coba Render dulu — kalau valid, override article dari Worker
+  // Kalau gagal → silent fallback, tetap pakai article existing
+  try {
+    const renderArticle = await renderHeavyArticle(env, topic, research);
+    if (renderArticle && renderArticle.title && Array.isArray(renderArticle.sections) && renderArticle.sections.length > 0) {
+      console.log(`✅ [Render] Artikel valid dari Turbo Layer, override Worker article`);
+      article = renderArticle;
+    }
+  } catch (e: any) {
+    // Silent fallback — Worker article tetap dipakai
+    console.log(`ℹ️ [Render] Tidak tersedia, lanjut pakai article dari Worker`);
   }
 
   // ═══ STEP 3-4: PUBLISH ke Discord via article-publisher ══

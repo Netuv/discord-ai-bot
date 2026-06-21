@@ -452,6 +452,26 @@ discord-ai-bot/
 > **Signed:** 20 Juni 2026, 19:44 WIB — Multi-Sumber Review v4.0 implemented ✅
 > **Updated by Kira**
 
+### 19. Perbaikan Format Artikel — Parsing + Validasi + Fallback (2026-06-20)
+
+#### 📋 Task Checklist
+- [x] **article-publisher.ts** — Fix `findYouTubeVideo(query, { env })` → `(query, env)` (env kebungkus objek)
+- [x] **article-writer.ts** — `parseArticleJSON()` tambah validasi sections + fallback kalau AI lupa
+- [x] **article-writer.ts** — Backward compat `topics` → `sections` (AI kadang generate pake nama beda)
+- [x] **npx tsc --noEmit** — Zero errors
+
+#### ✅ After Deployment — Changes Verified & Deployed
+| # | File/Fitur | Status | Keterangan |
+|---|------------|--------|------------|
+| 1 | `article-publisher.ts` — video env | ✅ Fixed | `{ env }` → `env`, cache KV berfungsi normal |
+| 2 | `article-writer.ts` — validation | ✅ Fixed | `parseArticleJSON` validasi sections + topics fallback |
+| 3 | `article-writer.ts` — fallback section | ✅ Added | Kalau AI lupa generate sections, bikin 1 section default |
+| 4 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
+
+---
+> **Signed:** 20 Juni 2026, 19:44 WIB — Perbaikan format artikel v4.2 ✅
+> **Updated by Kira**
+
 ## 📦 Dependencies
 
 ```json
@@ -522,6 +542,76 @@ discord-ai-bot/
 - Framework: Vitest + `@cloudflare/vitest-pool-workers`
 - Test file: `test/index.spec.ts`
 - Config: `vitest.config.mts`
+
+---
+
+### 20. Modular Scheduler REST API + Anti-Watermark (2026-06-21)
+
+#### 📋 Task Checklist
+- [x] **article-publisher.ts** — Hapus footer `"✨ Artikel • Lumina"` dari `publishHeadlineOnly()`
+- [x] **article-writer.ts** — Tambah instruksi ANTI-WATERMARK di prompt AI
+- [x] **index.ts** — REST API CRUD `/cron/tasks` (GET/POST/PUT/DELETE) — gak perlu edit TypeScript lagi!
+- [x] **index.ts** — Import `addTask, deleteTask, updateTask, getTasks, getTask` dari scheduler
+- [x] **npx tsc --noEmit** — Zero errors
+- [x] Deploy + test CRUD (create/list/delete) ✅
+
+#### ✅ After Deployment — Changes Verified & Deployed
+| # | File/Fitur | Status | Keterangan |
+|---|------------|--------|------------|
+| 1 | `article-publisher.ts` — Footer ✨ | ✅ Removed | Watermark "✨ Artikel • Lumina" dihapus |
+| 2 | `article-writer.ts` — Prompt watermark | ✅ Added | Instruksi ANTI-WATERMARK di AI prompt |
+| 3 | `index.ts` — REST API `/cron/tasks` | ✅ Deploy | CRUD lengkap: GET list/detail, POST create, PUT update, DELETE hapus |
+| 4 | `scheduler.ts` — `clearAllTasks()` | ✅ Deploy | Utility hapus semua task |
+| 5 | **Task "Update Konten Anime Harian"** | ✅ Active | Cron `0 6 * * *` (13:00 WIB), Control Room, ai-article |
+| 6 | **REST API verified** | ✅ Tested | POST create ✅, GET list ✅, DELETE ✅ |
+
+---
+
+---
+
+### 21. 🚀 Hybrid Render Turbo Layer — Heavy AI Processing (2026-06-21)
+
+#### 📋 Task Checklist
+- [x] **render-server/server.js** — Express server: `/health`, `/ai/chat`, `/article/heavy`, `/discord/followup`
+- [x] **render-server/package.json** — Dependencies (express + node-fetch v2)
+- [x] **render-server/Dockerfile** — Node.js 20 slim, production deploy
+- [x] **src/render-helper.ts** — NEW: HTTP client ke Render (5 fungsi, silent fallback)
+- [x] **src/index.ts** — /ask handler: DEFERRED response (type 5) + background via ctx.waitUntil() + coba Render dulu → fallback AiRouter
+- [x] **src/scheduler.ts** — executeAiArticle(): coba renderHeavyArticle() setelah STEP 2, override kalau valid
+- [x] **npx tsc --noEmit** — Zero errors ✅
+- [x] **Render server test** — Health ✅, /ai/chat ✅, /article/heavy ✅, /discord/followup ✅
+
+#### ✅ After Deployment — Changes Verified & Deployed
+| # | File/Fitur | Status | Keterangan |
+|---|------------|--------|------------|
+| 1 | `render-server/server.js` | ✅ New | 492 baris — Express server 4 endpoint + multi-provider AI (OpenRouter→NVIDIA→Cloudflare) |
+| 2 | `render-server/package.json` | ✅ New | express ^4.18.2, node-fetch ^2.7.0 |
+| 3 | `render-server/Dockerfile` | ✅ New | node:20-slim, production npm ci |
+| 4 | `src/render-helper.ts` | ✅ New | 204 baris — 5 exported functions: `renderChat`, `renderHeavyArticle`, `renderDiscordFollowup`, `discordFollowupDirect`, `isRenderAlive` |
+| 5 | `src/index.ts` — /ask | ✅ Modified | DEFERRED response (type 5) + `ctx.waitUntil()` + coba Render → fallback AiRouter + PATCH webhook |
+| 6 | `src/scheduler.ts` — executeAiArticle | ✅ Modified | Coba `renderHeavyArticle()` setelah STEP 2, override artikel kalau valid |
+| 7 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
+| 8 | Render server test (local) | ✅ Pass | Health 200, /ai/chat 503 (tanpa API key), /article/heavy fallback, /discord/followup 400 |
+
+#### 🔧 Cara Setup Render.com
+1. Push `render-server/` ke GitHub
+2. Deploy ke Render.com sebagai Web Service:
+   - **Root Directory:** `render-server`
+   - **Build:** `npm install`
+   - **Start:** `npm start`
+   - **Plan:** Free
+3. Set environment variables di Render:
+   - `OPENROUTER_API_KEY` (optional) — Priority 1
+   - `NVIDIA_API_KEY` (optional) — Priority 2
+   - `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_AI_TOKEN` (optional) — Priority 3
+4. Catet URL Render: `https://discord-turbo-layer.onrender.com`
+5. Set Cloudflare secret: `npx wrangler secret put RENDER_SERVICE_URL`
+6. Deploy Worker: `npx wrangler deploy`
+
+#### 🛡️ Garansi Keamanan
+- Kalau `RENDER_SERVICE_URL` gak di-set → Render skip otomatis, bot jalan seperti biasa
+- Semua fungsi Render return `null` kalau gagal → TIDAK PERNAH throw
+- Kalau Render mati → bot tetap 100% fungsional (fallback ke Worker)
 
 ---
 

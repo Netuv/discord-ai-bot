@@ -227,23 +227,19 @@ export async function publishArticle(
   try {
     const sections = article.sections || [];
     if (sections.length === 0) {
-      // Kirim minimal: headline + intro
-      const embedColor = getArticleColor(article.category);
-      await sendDiscordEmbed(token, channelId, {
-        title: (article.title || "📰 Artikel Anime").slice(0, 256),
-        description: (article.intro || "").slice(0, 4096),
-        color: embedColor,
-        timestamp: new Date().toISOString(),
-        footer: "🤖 LuminaBot • Artikel Otomatis",
-      });
+      // Kirim headline sebagai bold message (konsisten, tanpa embed)
+      await sendDiscordMessage(token, channelId, `**${(article.title || "📰 Artikel Anime").slice(0, 256)}**`);
+      if (article.intro) {
+        await sendDiscordMessage(token, channelId, article.intro.slice(0, 2000));
+      }
       return result;
     }
 
-    const embedColor = getArticleColor(article.category);
     const env = (globalThis as any).__LUMINA_ENV__;
 
-    // ═══ PHASE 1: PARALLEL — Kirim embed + Pre-fetch semua media ═══
-    // Embed dikirim sambil semua media di-fetch parallel
+    // ═══ PHASE 1: PARALLEL — Kirim HEADLINE + Pre-fetch semua media ═══
+    // HEADLINE dikirim sebagai bold MESSAGE (bukan embed) biar gak ada 2 header!
+    // Intro langsung masuk ke section 1 sebagai body tambahan
     const mediaPromises: Promise<MediaResult | null>[] = [];
 
     for (let i = 0; i < sections.length; i++) {
@@ -254,7 +250,7 @@ export async function publishArticle(
         mediaPromises.push(
           (async () => {
             try {
-              const url = await findYouTubeVideo(sec.video_query, { env });
+              const url = await findYouTubeVideo(sec.video_query, env);
               return url ? { type: "video" as const, sectionIndex: i, url } : null;
             } catch {
               return null;
@@ -286,23 +282,22 @@ export async function publishArticle(
       }
     }
 
-    // Kirim HEADLINE embed BERSAMAAN dengan pre-fetch media
+    // Kirim HEADLINE sebagai bold message (1 header aja!) + pre-fetch media parallel
     const [_, mediaResults] = await Promise.all([
-      // Kirim embed + spacer
+      // Kirim headline sebagai bold message + spacer
       (async () => {
-        await sendDiscordEmbed(token, channelId, {
-          title: (article.title || "📰 Artikel Anime").slice(0, 256),
-          description: (article.intro || "").slice(0, 4096),
-          color: embedColor,
-          timestamp: new Date().toISOString(),
-          footer: "🤖 LuminaBot • Artikel Otomatis",
-        });
-        await sendDiscordMessage(token, channelId, "\u3161");
+        await sendDiscordMessage(token, channelId, `**${(article.title || "📰 Artikel Anime").slice(0, 256)}**`);
       })(),
 
       // Pre-fetch semua media PARALLEL
       Promise.all(mediaPromises),
     ]);
+
+    // Gabung intro ke section pertama biar gak ada header terpisah
+    if (sections.length > 0 && article.intro) {
+      const firstSec = sections[0];
+      firstSec.body = article.intro + "\n\n" + (firstSec.body || "");
+    }
 
     // Organize media results per section
     const mediaBySection: Map<number, { videos: string[]; images: { url: string; caption: string }[] }> = new Map();
@@ -381,7 +376,6 @@ export async function publishHeadlineOnly(
       title: (article.title || "📰 Artikel Anime").slice(0, 256),
       description: (article.intro || "").slice(0, 4096),
       color: getArticleColor(article.category),
-      footer: "🤖 LuminaBot • Artikel Otomatis",
     });
     return true;
   } catch {

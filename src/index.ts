@@ -1,9 +1,10 @@
 import { InteractionType, InteractionResponseType, verifyKey } from "discord-interactions";
 import { handleMcpRequest, setEnv } from "./mcp-handler";
-import { handleScheduled, handleTestCron } from "./scheduler";
+import { handleScheduled, handleTestCron, clearAllTasks, addTask, deleteTask, updateTask, getTasks, getTask } from "./scheduler";
 import { AiRouter, defaultProviderModels } from "./ai-router";
 import { getUserConfig, setUserConfig, clearUserConfig } from "./user-config";
 import { WebScout } from "./web-scout";
+import { renderChat, discordFollowupDirect } from "./render-helper";
 
 // ─── WORKER HANDLER ─────────────────────────────────────────
 
@@ -81,6 +82,114 @@ export default {
           });
         } catch (e: any) {
           return new Response(JSON.stringify({ error: e.message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // ═══ SCHEDULER REST API — CRUD Task (tanpa edit TypeScript!) ═══
+      // GET  /cron/tasks       → List semua task
+      // GET  /cron/tasks?id=X  → Detail satu task
+      // POST /cron/tasks       → Buat task baru (JSON body)
+      // PUT  /cron/tasks?id=X  → Update task (JSON body)
+      // DELETE /cron/tasks?id=X → Hapus task
+      if (url.pathname === "/cron/tasks") {
+        try {
+          // GET — LIST / DETAIL
+          if (request.method === "GET") {
+            const taskId = url.searchParams.get("id");
+            if (taskId) {
+              const task = await getTask(env, taskId);
+              if (!task) {
+                return new Response(JSON.stringify({ ok: false, error: "Task tidak ditemukan" }), {
+                  status: 404, headers: { "Content-Type": "application/json" },
+                });
+              }
+              return new Response(JSON.stringify({ ok: true, task }), {
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            const tasks = await getTasks(env);
+            return new Response(JSON.stringify({ ok: true, tasks, count: tasks.length }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          // POST — CREATE
+          if (request.method === "POST") {
+            const body: any = await request.json();
+            const task = await addTask(env, {
+              name: body.name,
+              description: body.description || body.name,
+              cron: body.cron,
+              action: body.action,
+              params: body.params || {},
+              enabled: body.enabled !== false,
+              channel_id: body.channel_id,
+              guild_id: body.guild_id,
+            });
+            return new Response(JSON.stringify({ ok: true, task, message: `✅ Task "${task.name}" (ID: ${task.id}) dibuat!` }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          // PUT — UPDATE
+          if (request.method === "PUT") {
+            const taskId = url.searchParams.get("id");
+            if (!taskId) {
+              return new Response(JSON.stringify({ ok: false, error: "Parameter ?id= diperlukan" }), {
+                status: 400, headers: { "Content-Type": "application/json" },
+              });
+            }
+            const body: any = await request.json();
+            const updated = await updateTask(env, taskId, body);
+            if (!updated) {
+              return new Response(JSON.stringify({ ok: false, error: "Task tidak ditemukan" }), {
+                status: 404, headers: { "Content-Type": "application/json" },
+              });
+            }
+            return new Response(JSON.stringify({ ok: true, task: updated }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          // DELETE — HAPUS
+          if (request.method === "DELETE") {
+            const taskId = url.searchParams.get("id");
+            if (!taskId) {
+              return new Response(JSON.stringify({ ok: false, error: "Parameter ?id= diperlukan" }), {
+                status: 400, headers: { "Content-Type": "application/json" },
+              });
+            }
+            const deleted = await deleteTask(env, taskId);
+            if (!deleted) {
+              return new Response(JSON.stringify({ ok: false, error: "Task tidak ditemukan" }), {
+                status: 404, headers: { "Content-Type": "application/json" },
+              });
+            }
+            return new Response(JSON.stringify({ ok: true, message: `✅ Task ${taskId} dihapus.` }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          return new Response("Method not allowed", { status: 405 });
+        } catch (e: any) {
+          return new Response(JSON.stringify({ ok: false, error: e.message }), {
+            status: 500, headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // Jalur F: Clear all scheduler tasks from KV
+      if (url.pathname === "/cron/clear" && request.method === "GET") {
+        try {
+          const cleared = await clearAllTasks(env);
+          return new Response(JSON.stringify({ ok: true, cleared, message: `${cleared} task(s) dihapus dari scheduler.` }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (e: any) {
+          return new Response(JSON.stringify({ ok: false, error: e.message }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
@@ -232,40 +341,63 @@ export default {
             );
           }
 
-          // Handler /ask
+          // ═══ Handler /ask — HYBRID RENDER TURBO LAYER ═══
+          // Langkah 1: Kirim DEFERRED response (type 5) — user lihat loading
+          // Langkah 2: Background processing via ctx.waitUntil()
+          // Langkah 3: Coba Render dulu, fallback ke AiRouter
+          // Langkah 4: Kirim hasil via PATCH follow-up webhook
           if (cmdName === "ask") {
             const promptUser = interaction.data.options?.[0]?.value || "Halo";
             const userId = interaction.member?.user?.id || interaction.user?.id;
-            let balasanAI = "AI tidak tersedia.";
-            let usedConfig: { providerName?: string; modelName?: string } | null = null;
+            const appId = env.DISCORD_APP_ID || interaction.application_id;
+            const intToken = interaction.token;
 
-            try {
-              const router = new AiRouter(env);
+            // ─── Background processing ──────────────────────
+            ctx.waitUntil((async () => {
+              try {
+                let balasanAI: string;
+                let usedConfig: { providerName?: string; modelName?: string } | null = null;
+                let fromRender = false;
 
-              // Cek user config — apakah user sudah pilih provider/model tertentu
-              const userConfig = await getUserConfig(env, userId);
-              if (userConfig?.providerName) {
-                usedConfig = { providerName: userConfig.providerName ?? undefined, modelName: userConfig.modelName ?? undefined };
-                balasanAI = await router.chatWithUserConfig(
-                  [{ role: "user", content: promptUser }],
-                  { providerName: userConfig.providerName, modelName: userConfig.modelName }
-                );
-              } else {
-                balasanAI = await router.chat([{ role: "user", content: promptUser }]);
+                // COBA Render dulu (kalau RENDER_SERVICE_URL di-set)
+                const renderResult = await renderChat(env, [{ role: "user", content: promptUser }]);
+
+                if (renderResult) {
+                  balasanAI = renderResult;
+                  fromRender = true;
+                } else {
+                  // Fallback ke AiRouter — SAMA PERSIS SEPERTI SEBELUMNYA
+                  const router = new AiRouter(env);
+                  const userConfig = await getUserConfig(env, userId);
+                  if (userConfig?.providerName) {
+                    usedConfig = { providerName: userConfig.providerName ?? undefined, modelName: userConfig.modelName ?? undefined };
+                    balasanAI = await router.chatWithUserConfig(
+                      [{ role: "user", content: promptUser }],
+                      { providerName: userConfig.providerName, modelName: userConfig.modelName }
+                    );
+                  } else {
+                    balasanAI = await router.chat([{ role: "user", content: promptUser }]);
+                  }
+                }
+
+                let responseContent = `**🧠 Pertanyaan:** ${promptUser}\n\n**🤖 Jawaban:** ${balasanAI}`;
+                if (usedConfig?.providerName) {
+                  responseContent += `\n\n_⚙️ Via: ${usedConfig.providerName} → \`${usedConfig.modelName || "Default"}\`_`;
+                }
+
+                // Kirim follow-up via PATCH webhook Discord
+                await discordFollowupDirect(appId, intToken, responseContent);
+              } catch (e: any) {
+                // Kirim error sebagai follow-up
+                const errorContent = `❌ **Error:** ${e.message}`;
+                await discordFollowupDirect(appId, intToken, errorContent);
               }
-            } catch (e: any) {
-              balasanAI = `Error: ${e.message}`;
-            }
+            })());
 
-            let responseContent = `**🧠 Pertanyaan:** ${promptUser}\n\n**🤖 Jawaban:** ${balasanAI}`;
-            if (usedConfig?.providerName) {
-              responseContent += `\n\n_⚙️ Via: ${usedConfig.providerName} → \`${usedConfig.modelName || "Default"}\`_`;
-            }
-
+            // ─── Return DEFERRED langsung — gak nunggu AI ───
             return new Response(
               JSON.stringify({
-                type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-                data: { content: responseContent },
+                type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
               }),
               { headers: { "Content-Type": "application/json" } }
             );
