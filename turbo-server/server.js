@@ -142,7 +142,7 @@ async function callNVIDIA(messages, customModel) {
 }
 
 async function callOpenCode(messages, customModel) {
-  const model = customModel || 'gpt-4o';
+  const model = customModel || 'deepseek-v4-flash-free';
   const body = {
     model,
     messages,

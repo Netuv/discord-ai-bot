@@ -93,7 +93,7 @@ const defaultProviders: AiProvider[] = [
   {
     name: "OpenCode",
     priority: 4,
-    model: "gpt-4o",
+    model: "deepseek-v4-flash-free",
     type: "openai",
     apiKeyEnv: "OPENCODE_API_KEY",
     baseUrl: "https://opencode.ai/zen/v1",
@@ -172,9 +172,12 @@ export const defaultProviderModels: ProviderModelInfo[] = [
     name: "OpenCode",
     emoji: "🔵",
     secret: "OPENCODE_API_KEY",
-    note: "Daftar di opencode.ai",
+    note: "Daftar di opencode.ai/zen",
     models: [
-      { name: "gpt-4o", note: "Default" },
+      { name: "deepseek-v4-flash-free", note: "Default (FREE) 🆓" },
+      { name: "deepseek-v4-flash", note: "" },
+      { name: "deepseek-v4-pro", note: "" },
+      { name: "big-pickle", note: "FREE 🆓" },
     ],
   },
 ];
