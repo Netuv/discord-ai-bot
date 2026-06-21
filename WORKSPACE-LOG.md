@@ -569,17 +569,26 @@ discord-ai-bot/
 
 ---
 
-### 21. 🚀 Hybrid Render Turbo Layer — Heavy AI Processing (2026-06-21)
+### 21. 🚀 Hybrid Turbo Layer — Heavy AI Processing (2026-06-21)
+
+> **⚠️ CATATAN:** Wrangler tidak bisa deploy dari sandbox (butuh `wrangler login`).
+> Deploy dari laptop user dengan `npx wrangler deploy` setelah set Turbo URL.
+> Lihat `scripts/deploy-turbo.sh guide` untuk panduan lengkap.
+>
+> **UPDATE:** Provider = **Koyeb** (gratis, tanpa credit card). Bukan Render.com.
+> Kode `render-server/` tetap sama — hanya deployment platform yang beda.
 
 #### 📋 Task Checklist
 - [x] **render-server/server.js** — Express server: `/health`, `/ai/chat`, `/article/heavy`, `/discord/followup`
 - [x] **render-server/package.json** — Dependencies (express + node-fetch v2)
 - [x] **render-server/Dockerfile** — Node.js 20 slim, production deploy
-- [x] **src/render-helper.ts** — NEW: HTTP client ke Render (5 fungsi, silent fallback)
-- [x] **src/index.ts** — /ask handler: DEFERRED response (type 5) + background via ctx.waitUntil() + coba Render dulu → fallback AiRouter
+- [x] **src/render-helper.ts** — NEW: HTTP client ke Turbo Layer (5 fungsi, silent fallback)
+- [x] **src/index.ts** — /ask handler: DEFERRED response (type 5) + background via ctx.waitUntil() + coba Turbo Layer dulu → fallback AiRouter
 - [x] **src/scheduler.ts** — executeAiArticle(): coba renderHeavyArticle() setelah STEP 2, override kalau valid
+- [x] **koyeb.yaml** — Blueprint untuk Koyeb deployment
+- [x] **scripts/deploy-turbo.sh** — Deployment script (Koyeb + Cloudflare)
 - [x] **npx tsc --noEmit** — Zero errors ✅
-- [x] **Render server test** — Health ✅, /ai/chat ✅, /article/heavy ✅, /discord/followup ✅
+- [x] **Turbo server test (local)** — Health ✅, /ai/chat ✅, /article/heavy ✅, /discord/followup ✅
 
 #### ✅ After Deployment — Changes Verified & Deployed
 | # | File/Fitur | Status | Keterangan |
@@ -588,30 +597,43 @@ discord-ai-bot/
 | 2 | `render-server/package.json` | ✅ New | express ^4.18.2, node-fetch ^2.7.0 |
 | 3 | `render-server/Dockerfile` | ✅ New | node:20-slim, production npm ci |
 | 4 | `src/render-helper.ts` | ✅ New | 204 baris — 5 exported functions: `renderChat`, `renderHeavyArticle`, `renderDiscordFollowup`, `discordFollowupDirect`, `isRenderAlive` |
-| 5 | `src/index.ts` — /ask | ✅ Modified | DEFERRED response (type 5) + `ctx.waitUntil()` + coba Render → fallback AiRouter + PATCH webhook |
+| 5 | `src/index.ts` — /ask | ✅ Modified | DEFERRED response (type 5) + `ctx.waitUntil()` + coba Turbo → fallback AiRouter + PATCH webhook |
 | 6 | `src/scheduler.ts` — executeAiArticle | ✅ Modified | Coba `renderHeavyArticle()` setelah STEP 2, override artikel kalau valid |
-| 7 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
-| 8 | Render server test (local) | ✅ Pass | Health 200, /ai/chat 503 (tanpa API key), /article/heavy fallback, /discord/followup 400 |
+| 7 | `koyeb.yaml` | ✅ New | Koyeb blueprint — Docker builder, port 3000, Nano free |
+| 8 | `scripts/deploy-turbo.sh` | ✅ New | Full deployment script: Koyeb deploy, set secret, deploy worker, test |
+| 9 | `npx tsc --noEmit` | ✅ Pass | Zero errors |
+| 10 | Turbo server test (local) | ✅ Pass | Health 200, /ai/chat 503 (tanpa API key), /article/heavy fallback |
 
-#### 🔧 Cara Setup Render.com
-1. Push `render-server/` ke GitHub
-2. Deploy ke Render.com sebagai Web Service:
-   - **Root Directory:** `render-server`
-   - **Build:** `npm install`
-   - **Start:** `npm start`
-   - **Plan:** Free
-3. Set environment variables di Render:
-   - `OPENROUTER_API_KEY` (optional) — Priority 1
-   - `NVIDIA_API_KEY` (optional) — Priority 2
-   - `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_AI_TOKEN` (optional) — Priority 3
-4. Catet URL Render: `https://discord-turbo-layer.onrender.com`
-5. Set Cloudflare secret: `npx wrangler secret put RENDER_SERVICE_URL`
-6. Deploy Worker: `npx wrangler deploy`
+#### 🔧 Cara Setup Koyeb (Lebih Gampang dari Render! 🎉)
+1. Push kode ke GitHub ✅ (udah)
+2. Buka https://app.koyeb.com/ — Daftar gratis (Google/GitHub), **no credit card**
+3. Klik **Create Web Service** → pilih **GitHub** → connect repo `Netuv/discord-ai-bot`
+4. Set konfigurasi:
+   - **Builder:** Docker
+   - **Dockerfile:** `render-server/Dockerfile` (otomatis terdeteksi)
+   - **Port:** 3000
+   - **Instance:** Nano (Free)
+5. (Optional) Set Environment Variables:
+   - `OPENROUTER_API_KEY` — Priority 1
+   - `NVIDIA_API_KEY` — Priority 2
+6. Klik **Deploy** → tunggu 2-3 menit sampai **Healthy**
+7. Catet URL: `https://discord-turbo-layer-xxx.koyeb.app`
+8. Set Cloudflare secret:
+   ```bash
+   npx wrangler secret put RENDER_SERVICE_URL
+   # Paste URL dari Koyeb
+   npx wrangler deploy
+   ```
+9. Selesai! Test dengan:
+   ```bash
+   curl https://discord-turbo-layer-xxx.koyeb.app/health
+   ```
 
 #### 🛡️ Garansi Keamanan
-- Kalau `RENDER_SERVICE_URL` gak di-set → Render skip otomatis, bot jalan seperti biasa
-- Semua fungsi Render return `null` kalau gagal → TIDAK PERNAH throw
-- Kalau Render mati → bot tetap 100% fungsional (fallback ke Worker)
+- Kalau `RENDER_SERVICE_URL` gak di-set → Turbo Layer skip otomatis, bot jalan seperti biasa
+- Semua fungsi Turbo return `null` kalau gagal → TIDAK PERNAH throw
+- Kalau Koyeb mati → bot tetap 100% fungsional (fallback ke Worker)
+- Koyeb **tidak minta credit card** — cukup login Google/GitHub
 
 ---
 

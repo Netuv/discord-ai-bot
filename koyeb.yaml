@@ -1,0 +1,61 @@
+# 🚀 Koyeb Blueprint — Hybrid Turbo Layer
+#
+# Koyeb adalah platform serverless GRATIS tanpa perlu credit card!
+# Deploy langsung dari GitHub — auto-deploy tiap push ke branch.
+#
+# Cara pakai (via Web UI — termudah):
+# 1. Push kode ke GitHub
+# 2. Buka https://app.koyeb.com/
+# 3. Klik "Create Web Service"
+# 4. Pilih GitHub → connect repo "Netuv/discord-ai-bot"
+# 5. Set konfigurasi:
+#    - Builder: Docker
+#    - Root dir: render-server/
+#    - Port: 3000
+#    - Instance: Nano (Free)
+# 6. Set environment variables (optional)
+# 7. Deploy! 🚀
+#
+# Atau via CLI:
+# koyeb app init discord-turbo-layer \
+#   --git github.com/Netuv/discord-ai-bot \
+#   --git-branch master \
+#   --git-builder docker \
+#   --ports 3000:http \
+#   --routes /:3000
+#
+# Setelah deploy, URL: https://discord-turbo-layer-{org-hash}.koyeb.app
+
+# ─── Koyeb App Definition (untuk CLI / IaC) ─────────────
+name: discord-turbo-layer
+services:
+  - name: turbo-layer
+    type: web
+    instance_count: 1
+    ports:
+      - port: 3000
+        protocol: http
+    routes:
+      - path: /
+        port: 3000
+    env:
+      # Priority 1 (recommended): OpenRouter — banyak model gratis
+      - key: OPENROUTER_API_KEY
+        value: ""
+      # Priority 2: NVIDIA NIM — gratis, 121+ model
+      - key: NVIDIA_API_KEY
+        value: ""
+      # Priority 3: Cloudflare AI (via REST API)
+      - key: CLOUDFLARE_ACCOUNT_ID
+        value: ""
+      - key: CLOUDFLARE_AI_TOKEN
+        value: ""
+    git:
+      repository: Netuv/discord-ai-bot
+      branch: master
+      build:
+        builder: docker
+        dockerfile: render-server/Dockerfile
+    scalings:
+      min: 0
+      max: 1

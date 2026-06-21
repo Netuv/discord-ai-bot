@@ -1,8 +1,11 @@
-# 🏗️ Hybrid Cloudflare Workers + Render — Turbo Layer Plan
+# 🏗️ Hybrid Cloudflare Workers + Koyeb — Turbo Layer Plan
 
 > **Dokumen ini untuk Agent AI dan Developer**
 > Tujuan: Menambahkan **2nd Layer** untuk heavy processing tanpa mengubah workflow yang sudah ada.
 > **PRINSIP UTAMA: SEMUA YANG SEKARANG BERJALAN, TIDAK BOLEH BERUBAH.**
+>
+> 🚨 **UPDATE 21 Juni 2026:** Provider berubah dari **Render.com** → **Koyeb** (gratis, tanpa credit card).
+> Semua kode server tetap sama (Express + Docker). Hanya deployment provider yang diganti.
 
 ---
 
@@ -11,7 +14,7 @@
 | Section | Isi |
 |---------|-----|
 | [**1. Aturan Besi (Hard Rules)**](#-1-aturan-besi-hard-rules) | ⛔ **BACA INI DULU** — apa yang TIDAK BOLEH disentuh |
-| [**2. Arsitektur Hybrid**](#-2-arsitektur-hybrid) | Gambaran besar — hubungan Worker ⇄ Render |
+| [**2. Arsitektur Hybrid**](#-2-arsitektur-hybrid) | Gambaran besar — hubungan Worker ⇄ Koyeb |
 | [**3. Komponen Sistem**](#-3-komponen-sistem) | Detail setiap file baru & perubahannya |
 | [**4. Kode Lengkap**](#-4-kode-lengkap) | Implementasi semua file baru |
 | [**5. Integrasi**](#-5-integrasi) | Cara nyambung ke sistem existing (minimal) |
@@ -51,7 +54,7 @@ src/mcp-confirm.ts        → Action confirmation queue
 ### ✅ **YANG BOLEH DILAKUKAN:**
 
 1. **BUAT FILE BARU** di `src/` (prefiks `render-*` atau `turbo-*`)
-2. **BUAT FOLDER BARU** `render-server/` untuk server Render
+2. **BUAT FOLDER BARU** `render-server/` untuk server Turbo Layer (Express + Docker)
 3. **TAMBAH IMPORT + PANGGILAN** di file existing — tapi hanya:
    - Panggilan **opsional** (bungkus try-catch)
    - Panggilan **non-blocking** (gak nunggu hasilnya)
@@ -133,9 +136,9 @@ if (hasilRender) {
 ║   POST /article/heavy       → Generate artikel berat         ║
 ║   POST /discord/followup    → Kirim pesan ke Discord         ║
 ║                                                              ║
-║   📂 FILE: render-server/server.js                           ║
-║            render-server/package.json                        ║
-║            render-server/Dockerfile                          ║
+║   📂 FILE: render-server/server.js  (Express server)         ║
+║            render-server/package.json  (Dependencies)        ║
+║            render-server/Dockerfile  (Container config)      ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
