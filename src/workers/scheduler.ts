@@ -1,0 +1,245 @@
+/**
+ * scheduler.ts — Cron-based task scheduler for Discord AI Bot
+ * v5.0 — Modular, KV-backed, 7 action types
+ */
+
+import type { ScheduledTask, TaskLogEntry, SchedulerResult, ScheduledAction } from '../types/scheduler';
+import type { Env } from '../types/env';
+import { AiRouter } from '../ai/router';
+import { researchArticle, generateArticle, generateFallbackArticle } from '../ai/writer';
+import { WebScout } from './webscout';
+import { publishArticle } from '../discord/publisher';
+import { turboHeavyArticle } from '../turbo/client';
+import { logger } from '../core/logger';
+
+const KV_TASKS_KEY = 'scheduler:tasks';
+const KV_LOGS_PREFIX = 'scheduler:logs:';
+const MAX_LOGS = 50;
+
+// ─── Cron Parsing ─────────────────────────────────────────
+
+function parseField(field: string, min: number, max: number): number[] {
+	const vals: number[] = [];
+	for (const part of field.split(',')) {
+		const m = part.match(/^(\d+|\*)(?:-(\d+))?(?:\/(\d+))?$/);
+		if (!m) continue;
+		const step = parseInt(m[3]) || 1;
+		if (m[1] === '*') for (let i = min; i <= max; i += step) vals.push(i);
+		else { const s = parseInt(m[1]); const e = m[2] ? parseInt(m[2]) : s; for (let i = s; i <= e; i += step) vals.push(i); }
+	}
+	return [...new Set(vals)].sort((a, b) => a - b);
+}
+
+function cronMatches(cron: string, date: Date = new Date()): boolean {
+	try {
+		const parts = cron.trim().split(/\s+/);
+		if (parts.length !== 5) return false;
+		const [min, hr, dom, mon, dow] = parts.map((p, i) => parseField(p, [0, 0, 1, 1, 0][i], [59, 23, 31, 12, 6][i]));
+		return min.includes(date.getUTCMinutes()) && hr.includes(date.getUTCHours()) && dom.includes(date.getUTCDate()) && mon.includes(date.getUTCMonth() + 1) && dow.includes(date.getUTCDay());
+	} catch { return false; }
+}
+
+// ─── Task Storage ─────────────────────────────────────────
+
+async function getTaskList(env: Env): Promise<ScheduledTask[]> {
+	try { const raw = await env.SCHEDULER_KV.get(KV_TASKS_KEY, 'text'); return raw ? JSON.parse(raw) : []; } catch { return []; }
+}
+async function saveTaskList(env: Env, tasks: ScheduledTask[]): Promise<void> { await env.SCHEDULER_KV.put(KV_TASKS_KEY, JSON.stringify(tasks)); }
+
+export async function getTasks(env: Env): Promise<ScheduledTask[]> { return getTaskList(env); }
+export async function getTask(env: Env, taskId: string): Promise<ScheduledTask | null> { const tasks = await getTaskList(env); return tasks.find(t => t.id === taskId) || null; }
+export async function getTaskLogs(env: Env, taskId: string): Promise<TaskLogEntry[]> { try { const raw = await env.SCHEDULER_KV.get(`${KV_LOGS_PREFIX}${taskId}`, 'text'); return raw ? JSON.parse(raw) : []; } catch { return []; } }
+export async function clearAllTasks(env: Env): Promise<number> { const tasks = await getTaskList(env); await saveTaskList(env, []); return tasks.length; }
+
+export async function addTask(env: Env, input: ScheduledTask): Promise<ScheduledTask> {
+	const tasks = await getTaskList(env);
+	const task: ScheduledTask = { ...input, id: crypto.randomUUID().slice(0, 8), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_run: null, last_status: null, run_count: 0 };
+	tasks.push(task); await saveTaskList(env, tasks); return task;
+}
+
+export async function updateTask(env: Env, taskId: string, updates: Partial<ScheduledTask>): Promise<ScheduledTask | null> {
+	const tasks = await getTaskList(env);
+	const idx = tasks.findIndex(t => t.id === taskId);
+	if (idx === -1) return null;
+	tasks[idx] = { ...tasks[idx], ...updates, id: tasks[idx].id, updated_at: new Date().toISOString() };
+	await saveTaskList(env, tasks); return tasks[idx];
+}
+
+export async function deleteTask(env: Env, taskId: string): Promise<boolean> {
+	const tasks = await getTaskList(env);
+	const filtered = tasks.filter(t => t.id !== taskId);
+	if (filtered.length === tasks.length) return false;
+	await saveTaskList(env, filtered); return true;
+}
+
+async function addLog(env: Env, log: TaskLogEntry): Promise<void> {
+	const key = `${KV_LOGS_PREFIX}${log.task_id}`;
+	let logs: TaskLogEntry[] = [];
+	try { const raw = await env.SCHEDULER_KV.get(key, 'text'); logs = raw ? JSON.parse(raw) : []; } catch { /* fresh */ }
+	logs.unshift(log);
+	if (logs.length > MAX_LOGS) logs = logs.slice(0, MAX_LOGS);
+	await env.SCHEDULER_KV.put(key, JSON.stringify(logs));
+}
+
+// ─── Action Executors ─────────────────────────────────────
+
+async function execSendMsg(task: ScheduledTask, env: Env): Promise<string> {
+	const content = (task.params.message as string) || '⏰ **Tugas Terjadwal**';
+	const res = await fetch(`https://discord.com/api/v10/channels/${task.channel_id}/messages`, {
+		method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content, ...(task.params.embed ? { embeds: [task.params.embed] } : {}) }),
+	});
+	if (!res.ok) throw new Error(`Discord ${res.status}: ${await res.text()}`);
+	return `✅ Pesan ke <#${task.channel_id}>`;
+}
+
+async function execAiPrompt(task: ScheduledTask, env: Env): Promise<string> {
+	const prompt = (task.params.prompt as string) || 'Buatkan pengumuman singkat.';
+	const router = new AiRouter(env);
+	const response = await router.chat([{ role: 'user', content: prompt }]);
+	const res = await fetch(`https://discord.com/api/v10/channels/${task.channel_id}/messages`, {
+		method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content: `**🤖 Scheduled AI — ${task.name}**\n\n${response.slice(0, 1900)}` }),
+	});
+	if (!res.ok) throw new Error(`Discord ${res.status}: ${await res.text()}`);
+	return `✅ AI response ke <#${task.channel_id}>`;
+}
+
+async function execPurge(task: ScheduledTask, env: Env): Promise<string> {
+	const limit = Math.min((task.params.jumlah as number) || 10, 100);
+	const msgRes = await fetch(`https://discord.com/api/v10/channels/${task.channel_id}/messages?limit=${limit}`, { headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } });
+	if (!msgRes.ok) throw new Error(`Gagal ambil pesan: ${await msgRes.text()}`);
+	const msgs: any[] = await msgRes.json();
+	if (msgs.length === 0) return '📭 Tidak ada pesan.';
+	const ids = msgs.map(m => m.id);
+	if (ids.length === 1) {
+		const r = await fetch(`https://discord.com/api/v10/channels/${task.channel_id}/messages/${ids[0]}`, { method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } });
+		if (!r.ok) throw new Error(`Gagal hapus: ${await r.text()}`);
+	} else {
+		const r = await fetch(`https://discord.com/api/v10/channels/${task.channel_id}/messages/bulk-delete`, { method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: ids }) });
+		if (!r.ok) throw new Error(`Bulk delete gagal: ${await r.text()}`);
+	}
+	return `✅ ${ids.length} pesan dihapus dari <#${task.channel_id}>`;
+}
+
+async function execWebhook(task: ScheduledTask, _env: Env): Promise<string> {
+	const url = task.params.webhook_url as string; if (!url) throw new Error('webhook_url tidak diset');
+	const method = (task.params.method as string) || 'POST';
+	const headers = (task.params.headers as Record<string, string>) || { 'Content-Type': 'application/json' };
+	const body = task.params.body ? JSON.stringify(task.params.body) : undefined;
+	const res = await fetch(url, { method, headers, body });
+	return `✅ Webhook ${method} ${url} → ${res.status}`;
+}
+
+async function execUpdateStatus(task: ScheduledTask, env: Env): Promise<string> {
+	const status = (task.params.status as string) || '🟢 Bot aktif';
+	const res = await fetch(`https://discord.com/api/v10/channels/${task.channel_id}/messages`, { method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ content: `📊 **Status Update:** ${status}` }) });
+	if (!res.ok) throw new Error(`Discord ${res.status}: ${await res.text()}`);
+	return `✅ Status ke <#${task.channel_id}>`;
+}
+
+async function execGithub(task: ScheduledTask, env: Env): Promise<string> {
+	if (!env.GITHUB_TOKEN) throw new Error('GITHUB_TOKEN tidak tersedia');
+	const owner = (task.params.owner as string) || 'Netuv';
+	const repo = task.params.repo as string;
+	const command = (task.params.command as string) || "echo 'Scheduled run'";
+	if (!repo) throw new Error('repo tidak diset');
+	const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows/remote-run.yml/dispatches`, { method: 'POST', headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, 'User-Agent': 'discord-ai-bot-scheduler', Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: 'master', inputs: { command, shell: 'bash', working_directory: '.', run_id: crypto.randomUUID().slice(0, 8) } }) });
+	if (!res.ok) throw new Error(`GitHub ${res.status}: ${await res.text()}`);
+	return `✅ GitHub Actions triggered`;
+}
+
+// ─── AI Article (research → generate → publish) ─────────
+
+export async function executeAiArticle(task: ScheduledTask, env: Env): Promise<string> {
+	const topic = (task.params.topic || task.params.prompt || 'berita anime/manga/game terkini') as string;
+	const channelId = task.channel_id;
+
+	let research = { summary: '📰 Gunakan pengetahuan umum.', reviewSummary: '' };
+	try { research = await researchArticle(topic, env); } catch (e: any) { logger.warn('Scheduler', 'Research gagal', { error: e.message }); }
+
+	const [workerArticle, turboArticle] = await Promise.all([
+		(async () => { try { return await generateArticle(topic, research, env); } catch { return generateFallbackArticle(topic); } })(),
+		(async () => { try { return await turboHeavyArticle(env, topic, research); } catch { return null; } })(),
+	]);
+
+	const rawArticle = (turboArticle && typeof turboArticle === 'object' && 'title' in turboArticle && 'sections' in turboArticle) ? turboArticle : workerArticle;
+	const article = rawArticle as any;
+	const result = await publishArticle(env.DISCORD_TOKEN, channelId, article, env);
+
+	if (!result.success) {
+		const errDetail = result.errors.length > 0 ? ` — ${result.errors[0]}` : '';
+		return `⚠️ Gagal publish: ${result.error}${errDetail}`;
+	}
+	const title = article.title || `📰 ${topic}`;
+	return `✅ "${title.slice(0, 60)}..." → ${result.sectionsPublished} section${result.imagesPublished > 0 ? ` • ${result.imagesPublished} gambar` : ''}${result.videosPublished > 0 ? ` • ${result.videosPublished} video` : ''}`;
+}
+
+// ─── Executor Router ──────────────────────────────────────
+
+async function executeTask(task: ScheduledTask, env: Env): Promise<string> {
+	switch (task.action as ScheduledAction) {
+		case 'send-message': return execSendMsg(task, env);
+		case 'ai-prompt': return execAiPrompt(task, env);
+		case 'ai-article': return executeAiArticle(task, env);
+		case 'purge-channel': return execPurge(task, env);
+		case 'custom-webhook': return execWebhook(task, env);
+		case 'update-status': return execUpdateStatus(task, env);
+		case 'github-run': return execGithub(task, env);
+		default: throw new Error(`Unknown action: ${task.action}`);
+	}
+}
+
+// ─── Handlers ──────────────────────────────────────────────
+
+export async function handleScheduled(env: Env): Promise<SchedulerResult> {
+	const tasks = await getTaskList(env);
+	const now = new Date();
+	const due = tasks.filter(t => t.enabled && cronMatches(t.cron, now));
+	const result: SchedulerResult = { executed: 0, failed: 0, logs: [] };
+
+	if (due.length === 0) { result.logs.push('Tidak ada task yang perlu dijalankan sekarang.'); return result; }
+
+	for (const task of due) {
+		const start = Date.now();
+		try {
+			const msg = await executeTask(task, env);
+			const dur = Date.now() - start;
+			await updateTask(env, task.id, { last_run: new Date().toISOString(), last_status: 'success', run_count: task.run_count + 1 });
+			await addLog(env, { task_id: task.id, task_name: task.name, timestamp: new Date().toISOString(), status: 'success', message: msg, duration_ms: dur });
+			result.executed++; result.logs.push(`✅ "${task.name}": ${msg} (${dur}ms)`);
+		} catch (e: any) {
+			const dur = Date.now() - start;
+			await updateTask(env, task.id, { last_run: new Date().toISOString(), last_status: 'failed', run_count: task.run_count + 1 });
+			await addLog(env, { task_id: task.id, task_name: task.name, timestamp: new Date().toISOString(), status: 'failed', message: e.message, duration_ms: dur });
+			result.failed++; result.logs.push(`❌ "${task.name}": ${e.message} (${dur}ms)`);
+		}
+	}
+
+	return result;
+}
+
+export async function handleTestCron(env: Env, taskId?: string): Promise<SchedulerResult> {
+	const tasks = await getTaskList(env);
+	let targets = tasks.filter(t => t.enabled);
+	if (taskId) { targets = targets.filter(t => t.id === taskId); if (targets.length === 0) return { executed: 0, failed: 0, logs: [`Task "${taskId}" tidak ditemukan.`] }; }
+
+	const result: SchedulerResult = { executed: 0, failed: 0, logs: [] };
+	for (const task of targets) {
+		const start = Date.now();
+		try {
+			const msg = await executeTask(task, env);
+			const dur = Date.now() - start;
+			await updateTask(env, task.id, { last_run: new Date().toISOString(), last_status: 'success', run_count: task.run_count + 1 });
+			await addLog(env, { task_id: task.id, task_name: task.name, timestamp: new Date().toISOString(), status: 'success', message: msg, duration_ms: dur });
+			result.executed++; result.logs.push(`✅ "${task.name}": ${msg} (${dur}ms)`);
+		} catch (e: any) {
+			const dur = Date.now() - start;
+			await updateTask(env, task.id, { last_run: new Date().toISOString(), last_status: 'failed', run_count: task.run_count + 1 });
+			await addLog(env, { task_id: task.id, task_name: task.name, timestamp: new Date().toISOString(), status: 'failed', message: e.message, duration_ms: dur });
+			result.failed++; result.logs.push(`❌ "${task.name}": ${e.message} (${dur}ms)`);
+		}
+	}
+
+	return result;
+}

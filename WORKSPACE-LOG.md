@@ -1,9 +1,10 @@
 # Discord AI Bot — Workspace Log
 
-> **Tanggal:** 20 Juni 2026
+> **Tanggal:** 22 Juni 2026 (Updated)
 > **Project:** `discord-ai-bot` — Cloudflare Workers Discord Bot + MCP Server
 > **Worker URL:** `https://discord-ai-bot.luminary-bot.workers.dev`
 > **Laptop:** Probadi (Baru) — Workspace dipindah dari PC kantor
+> **Latest Version:** v5.1.1 — Audit Security Fixes
 
 ---
 
@@ -941,3 +942,25 @@ Article AI → [FORMAT CHECK] → [CONTENT CLEAN] → [WATERMARK STRIP]
 
 > **Signed:** 21 Juni 2026, 21:20 WIB — Final Sync: Commit + Push + Deploy ✅
 > **Updated by Kira**
+
+---
+
+## 🚀 v5.1.1 — Audit Security Fixes (22 Juni)
+
+> **Version ID:** `e79a7f59`
+> **Upload:** 126.76 KiB (gzip: 30.73 KiB) | Startup: 5ms
+
+| # | Issue | Severity | File | Fix |
+|---|-------|----------|------|-----|
+| 1 | Confirm-action leak `e.message` | 🔴 HIGH | admin-tools.ts | Generic error message |
+| 2 | DiscordApiError body in message | 🟡 MEDIUM | core/errors.ts | Remove body from error |
+| 3 | AI provider body in throw | 🟡 MEDIUM | ai/router.ts | Remove body from throw |
+| 4 | API failures logged as warn | 🟡 MEDIUM | discord/client.ts | Changed to `logger.error` |
+| 5 | cacheKey scope error | 🟢 LOW | workers/imagescraper.ts | Hoisted variable |
+| 6 | videoscraper url type error | 🟢 LOW | workers/videoscraper.ts | Removed field |
+
+**TypeScript:** ✅ Zero errors
+**Deploy:** ✅ `e79a7f59` live
+
+> **Signed:** 22 Juni 2026 — v5.1.1 Security Audit ✅
+> **Updated by OWL**
