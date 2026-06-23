@@ -66,7 +66,7 @@ Discord bot berbasis **Cloudflare Workers** dengan **MCP (Model Context Protocol
 
 ## � v6.1 — Image Accuracy + Turbo Layer + Prompt Fix
 **Date:** 23 Juni 2026
-**Version:** pending-commit
+**Version:** 2b22dd8 / v6.1
 
 ### Changes
 | Area | What | Why |
