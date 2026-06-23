@@ -1,10 +1,11 @@
 /**
  * github-studio.ts — GitHub API Toolkit
- * v5.0 — File, PR, Issue, Release, Community management
+ * v6.0 — File, PR, Issue, Release, Community management
+ * Moved from workers/github-studio.ts
  */
 
-import type { Env } from '../types/env';
-import { logger } from '../core/logger';
+import type { Env } from '../../types/env';
+import { logger } from '../../core/logger';
 
 const GITHUB_API = 'https://api.github.com';
 

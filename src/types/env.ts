@@ -1,7 +1,9 @@
 /**
  * env.ts — Cloudflare Worker Environment Bindings
- * v5.0 — Strictly typed, zero `any`
+ * v6.0 — Strictly typed, zero `any`, includes Queue binding
  */
+
+import type { Queue } from '@cloudflare/workers-types';
 
 export interface Env {
 	// Discord
@@ -15,6 +17,7 @@ export interface Env {
 
 	// Cloudflare bindings
 	SCHEDULER_KV: KVNamespace;
+	SCHEDULER_QUEUE: Queue;
 	AI: Ai;
 
 	// AI Provider keys

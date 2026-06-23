@@ -13,7 +13,7 @@
 import type { Env } from '../types/env';
 import type { Article, ArticleResearch, ArticleCategory } from '../types/article';
 import { ARTICLE_COLORS } from '../config/discord';
-import { WebScout } from '../workers/webscout';
+import { WebScout } from '../services/web/webscout';
 import { AiRouter } from './router';
 
 // ─── Research Module ───────────────────────────────────────

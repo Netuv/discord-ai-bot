@@ -5,7 +5,8 @@
 
 import type { ToolDefinition } from '../registry';
 import { getEnv } from '../../core/env';
-import { getTasks, getTask, addTask, updateTask, deleteTask, getTaskLogs, clearAllTasks } from '../../workers/scheduler';
+import { getTasks, getTask, addTask, updateTask, deleteTask, clearAllTasks } from '../../services/scheduler/storage';
+import { getTaskLogs } from '../../services/scheduler/logging';
 import { makeTool } from './_helpers';
 
 export function createSchedulerTools(): Record<string, ToolDefinition> {

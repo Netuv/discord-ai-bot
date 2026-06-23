@@ -1,10 +1,11 @@
 /**
  * webscout.ts — Web intelligence module for Discord AI Bot
- * v5.0 — Multi-source search, HTML scraping, deep search, KV cache
+ * v6.0 — Multi-source search, HTML scraping, deep search, KV cache
+ * Moved from workers/webscout.ts
  */
 
-import type { Env } from '../types/env';
-import { logger } from '../core/logger';
+import type { Env } from '../../types/env';
+import { logger } from '../../core/logger';
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -16,15 +17,7 @@ export interface SearchOptions { maxResults?: number; sources?: string[]; useCac
 
 // ─── Cache ─────────────────────────────────────────────────
 
-const CACHE_PREFIX = 'webscout:';
-const CACHE_TTL = 3600;
-
-async function cacheGet(env: Env, key: string): Promise<any | null> {
-	try { const raw = await env.SCHEDULER_KV.get(`${CACHE_PREFIX}${key}`, 'text'); return raw ? JSON.parse(raw) : null; } catch { return null; }
-}
-async function cacheSet(env: Env, key: string, data: any): Promise<void> {
-	try { await env.SCHEDULER_KV.put(`${CACHE_PREFIX}${key}`, JSON.stringify(data), { expirationTtl: CACHE_TTL }); } catch { /* optional */ }
-}
+import { cacheGet, cacheSet } from './cache';
 
 // ─── HTML Utils ────────────────────────────────────────────
 
@@ -112,7 +105,7 @@ export class WebScout {
 		const cacheKey = `search:${query.toLowerCase().trim()}`;
 
 		if (useCache) {
-			const cached = await cacheGet(this.env, cacheKey);
+			const cached = await cacheGet<SearchResult[]>(this.env, cacheKey);
 			if (cached && Array.isArray(cached)) { logger.debug('WebScout', `Cache hit: "${query}"`); return cached.slice(0, maxResults); }
 		}
 

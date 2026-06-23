@@ -5,7 +5,7 @@
 
 import type { ToolDefinition } from '../registry';
 import { getEnv } from '../../core/env';
-import { GitHubStudio } from '../../workers/github-studio';
+import { GitHubStudio } from '../../services/github/studio';
 import { makeTool, orFail } from './_helpers';
 
 function getStudio(args: Record<string, unknown>): GitHubStudio {

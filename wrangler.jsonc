@@ -20,6 +20,21 @@
 			"preview_id": "d55f00a62a194646b9c7bc069048f3c2"
 		}
 	],
+	"queues": {
+		"producers": [
+			{
+				"queue": "scheduler-queue",
+				"binding": "SCHEDULER_QUEUE"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "scheduler-queue",
+				"max_batch_size": 5,
+				"max_batch_timeout": 10
+			}
+		]
+	},
 	"triggers": {
 		"crons": [
 			"*/5 * * * *"

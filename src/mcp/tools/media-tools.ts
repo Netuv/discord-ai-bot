@@ -5,8 +5,8 @@
 
 import type { ToolDefinition } from '../registry';
 import { getEnv } from '../../core/env';
-import { searchAnimeImage, downloadImage } from '../../workers/imagescraper';
-import { findYouTubeVideo } from '../../workers/videoscraper';
+import { searchAnimeImage, downloadImage } from '../../services/media/imagescraper';
+import { findYouTubeVideo } from '../../services/media/videoscraper';
 import { makeTool } from './_helpers';
 
 export function createMediaTools(): Record<string, ToolDefinition> {

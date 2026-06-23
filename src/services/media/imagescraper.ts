@@ -1,10 +1,11 @@
 /**
  * imagescraper.ts — Multi-source anime image search with token-based scoring
- * v5.0 — Kitsu, AniList, Jikan, DDG Images, KV cache
+ * v6.0 — Kitsu, AniList, Jikan, DDG Images, KV cache
+ * Moved from workers/imagescraper.ts
  */
 
-import type { Env } from '../types/env';
-import { logger } from '../core/logger';
+import type { Env } from '../../types/env';
+import { logger } from '../../core/logger';
 
 export interface ImageSearchResult { url: string; title: string; source: string; malId?: number; anilistId?: number; score: number; type: 'anime' | 'manga'; description?: string; }
 
@@ -120,10 +121,8 @@ export async function searchAnimeImage(query: string, options?: { env?: Env; ski
 		const titles = [item.attributes.canonicalTitle, ...Object.values(item.attributes.titles || {})].filter(Boolean);
 		let best = 0;
 		for (const t of titles) best = Math.max(best, titleMatchScore(query, t, item.attributes.synopsis));
-		if (best >= 60) {
-			const img = item.attributes.posterImage?.large || item.attributes.posterImage?.medium;
-			if (img) allResults.push({ url: img, title: item.attributes.canonicalTitle, source: 'Kitsu', score: best, type: 'anime' });
-		}
+		const img = item.attributes.posterImage?.large || item.attributes.posterImage?.medium;
+		if (img) allResults.push({ url: img, title: item.attributes.canonicalTitle, source: 'Kitsu', score: Math.max(30, best), type: 'anime' });
 	}
 
 	const anilistData = anilist.status === 'fulfilled' ? anilist.value : [];
@@ -131,14 +130,12 @@ export async function searchAnimeImage(query: string, options?: { env?: Env; ski
 		const titles = [item.title?.romaji, item.title?.english, item.title?.native].filter(Boolean) as string[];
 		let best = 0;
 		for (const t of titles) best = Math.max(best, titleMatchScore(query, t, item.description));
-		if (best >= 60 && item.coverImage?.large) allResults.push({ url: item.coverImage.large, title: titles[0] || '', source: 'AniList', anilistId: item.id, score: best, type: (item.type?.toLowerCase() || 'anime') as 'anime' | 'manga' });
+		if (item.coverImage?.large) allResults.push({ url: item.coverImage.large, title: titles[0] || '', source: 'AniList', anilistId: item.id, score: Math.max(30, best), type: (item.type?.toLowerCase() || 'anime') as 'anime' | 'manga' });
 	}
 
 	allResults.sort((a, b) => b.score - a.score);
 	if (allResults.length === 0) {
-		// Fallback: try simpler query
-		const simpler = query.replace(/season\s+\d+|part\s+\d+|cour\s+\d+|sequel|prequel|remake|\bfinal\b/i, '').trim();
-		if (simpler && simpler !== query && simpler.length >= 3) return searchAnimeImage(simpler, options);
+		logger.warn('ImageScraper', `No results for: "${query}"`);
 		return null;
 	}
 

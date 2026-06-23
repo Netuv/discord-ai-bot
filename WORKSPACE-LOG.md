@@ -1,14 +1,52 @@
 # Discord AI Bot — Workspace Log
 
-> **Tanggal:** 22 Juni 2026 (Updated)
+> **Tanggal:** 23 Juni 2026 (v6.0)
 > **Project:** `discord-ai-bot` — Cloudflare Workers Discord Bot + MCP Server
 > **Worker URL:** `https://discord-ai-bot.luminary-bot.workers.dev`
-> **Laptop:** Probadi (Baru) — Workspace dipindah dari PC kantor
-> **Latest Version:** v5.1.1 — Audit Security Fixes
+> **Latest Version:** v6.0 — Modular Rewrite + Queue Architecture ✅
 
 ---
 
-## 📋 Ringkasan Project
+## 📦 v6.0 — Modular Rewrite + Queue Architecture
+**Date:** 23 Juni 2026
+**Version:** c15947c6 (live)
+
+### Architecture Change
+```
+Cron (*/5 * * * *) → QUEUE PRODUCER → scheduler-queue → QUEUE CONSUMER → handleScheduled()
+                                                                   └── Fresh BudgetTracker (50 subrequests)
+```
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `src/core/subrequest.ts` | `BudgetTracker` class — track subrequest usage per invocation |
+| `src/queue/handler.ts` | Queue consumer — receives `scheduled-tick` / `test-cron` messages |
+| `src/services/scheduler/engine.ts` | PURE `cronMatches()` — no I/O |
+| `src/services/scheduler/storage.ts` | KV task CRUD |
+| `src/services/scheduler/logging.ts` | KV task log management |
+| `src/services/scheduler/executors.ts` | 7 action executors + AI article pipeline |
+| `src/services/web/cache.ts` | Generic KV cache wrapper |
+
+### Moved Files
+`src/workers/` → `src/services/` (webscout, imagescraper, videoscraper, github-studio)
+
+### Deleted
+`src/workers/` (entire directory)
+
+### Bindings (live)
+- `SCHEDULER_KV` — KV Namespace
+- `SCHEDULER_QUEUE` — Queue (scheduler-queue)
+- `AI` — Workers AI
+
+### Notes
+- Queue fallback: if `SCHEDULER_QUEUE.send()` fails, runs `handleScheduled()` directly
+- TypeScript: ✅ clean (0 errors)
+- `@cloudflare/workers-types` added as devDependency
+
+---
+
+## 📋 Ringkasan Project (v5.x Legacy)
 
 Discord bot berbasis **Cloudflare Workers** dengan **MCP (Model Context Protocol)** server, AI integration (Llama 4 Scout), scheduler system, WebScout, GitHub Studio, VideoScraper, dan ~115 tools untuk administrasi Discord.
 
@@ -963,4 +1001,76 @@ Article AI → [FORMAT CHECK] → [CONTENT CLEAN] → [WATERMARK STRIP]
 **Deploy:** ✅ `e79a7f59` live
 
 > **Signed:** 22 Juni 2026 — v5.1.1 Security Audit ✅
+> **Updated by OWL**
+
+---
+
+## 📦 v5.1.2 — Subrequest & Media Fixes (22 Juni)
+
+> **Version IDs:** `b51b5f80` → `6422bd79` → `c6841015` → `b48994b7`
+> **Upload:** 129.81 KiB (gzip: 31.48 KiB) | Startup: 7ms
+
+### Problem
+- `Too many subrequests by single Worker invocation` error di section 2
+- Video search selalu return null dari CF Workers (YT & DDG & Invidious block CF IPs)
+- Image search terlalu strict (threshold 60) — banyak false negative
+- buildKeywords generate 3+ variants × multiple sources = ~40+ subreq per article
+- Cloudflare **free plan limit: 50 subrequests** per invocation
+
+### Fixes Applied
+
+#### imagescraper.ts
+| # | Fix | Impact |
+|---|-----|--------|
+| 1 | Threshold 60→30 (accept lower-score matches) | ✅ More images found |
+| 2 | Remove recursive fallback query simplification | ✅ Save subrequests |
+| 3 | Add Kitsu items even with score < 60 (floor score to 30) | ✅ More results |
+| 4 | Add AniList items even without `coverImage.large` filter | ✅ More results |
+
+#### videoscraper.ts
+| # | Fix | Impact |
+|---|-----|--------|
+| 1 | Threshold 40→20 (accept lower-score matches) | ✅ More potential hits |
+| 2 | Invidious primary (1 fetch, no instance loop) | ✅ 1 subreq vs 3 |
+| 3 | DDG fallback only on Invidious fail (1 fetch) | ✅ 1 subreq vs 3 |
+| 4 | Remove YT HTML direct search (blocked from CF) | ✅ Save subrequests |
+| 5 | Remove oEmbed validation requirement | ✅ Faster, less blocking |
+| 6 | Remove `sp=CAISAhAB` from YT URL | ✅ Fix YT HTML parser |
+| 7 | Regex improvements for DDG link extraction | ✅ Better parsing |
+
+#### publisher.ts
+| # | Fix | Impact |
+|---|-----|--------|
+| 1 | buildKeywords MAX: 3→1 query per type | ✅ -66% subrequests |
+| 2 | Added `subrequestBudget` counter (start 50) | ✅ Early stop on budget |
+| 3 | Budget cost: 1 per media fetch (was 2) | ✅ More accurate tracking |
+| 4 | Sequential media fetch (image → video, not parallel) | ✅ Better budget control |
+| 5 | `skipCache: true` for image search during publish | ✅ Save KV subrequest |
+| 6 | Detailed logging per section (keywords, results, budget) | ✅ Debug visibility |
+
+#### webscout.ts
+| # | Fix | Impact |
+|---|-----|--------|
+| 1 | Sources limited to duckduckgo only | ✅ Save subrequests |
+
+### Test Results (v5.1.2)
+
+| Test | Result | Duration |
+|------|--------|----------|
+| `/cron/test` (Run 1) | ✅ **3 sections, 2 images** | 89s |
+| `/cron/test` (Run 2 — after video simplifications) | ✅ **2 sections, 2 images** | 41s |
+| `/debug/media?q=Tokyo+Revengers` (image) | ✅ Found: Kitsu poster | 1s |
+| `/debug/media?q=One+Piece+trailer` (video) | ❌ Still null — all video sources block CF IPs | — |
+
+### Known Issues
+- **Video search from CF Workers:** YouTube, DuckDuckGo, and Invidious all block Cloudflare Workers IP ranges. Video search will likely remain unavailable unless a CF-compatible YouTube API is available or the user provides a `YOUTUBE_API_KEY`.
+- **Image quality:** Using anime databases (Kitsu/AniList) means poster/key visual images, not news screenshots. Good for anime topics, may be irrelevant for general gaming news.
+
+### Images Working ✅
+- Kitsu + AniList search reliable for anime titles
+- Token-scoring produces relevant results
+- Fallback chain provides solid coverage
+- Subrequest budget no longer exceeded
+
+> **Signed:** 22 Juni 2026 — v5.1.2 Media & Subrequest Fixes ✅
 > **Updated by OWL**

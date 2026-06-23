@@ -11,6 +11,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@cloudflare/workers-types": "^4.20260623.1",
     "@types/node": "^25.9.3",
     "ts-language-mcp": "^1.2.0",
     "ts-mcp-server": "^1.1.1",

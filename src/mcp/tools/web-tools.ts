@@ -5,7 +5,7 @@
 
 import type { ToolDefinition } from '../registry';
 import { getEnv } from '../../core/env';
-import { WebScout } from '../../workers/webscout';
+import { WebScout } from '../../services/web/webscout';
 import { makeTool } from './_helpers';
 
 export function createWebTools(): Record<string, ToolDefinition> {
