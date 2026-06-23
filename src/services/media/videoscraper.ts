@@ -153,7 +153,7 @@ export async function findYouTubeVideo(query: string, env: Env): Promise<string 
 		if (cached) { const p = JSON.parse(cached); if (p?.url) { logger.debug('VideoScraper', `Cache hit: "${query}"`); return p.url; } }
 	} catch { }
 
-	// Step 1: YouTube Data API v3 (works from CF Workers, needs API key)
+	// Step 1: YouTube Data API v3 (if key available)
 	if (env.YOUTUBE_API_KEY) {
 		const ytApiItems = await searchYouTubeAPI(query, env.YOUTUBE_API_KEY);
 		for (const item of ytApiItems) {
@@ -166,24 +166,49 @@ export async function findYouTubeVideo(query: string, env: Env): Promise<string 
 		}
 	}
 
-	// Step 2: Invidious search — 1 subrequest
-	const invidiousItems = await searchInvidious(query);
-	for (const item of invidiousItems) {
-		const score = videoTitleScore(query, item.title);
-		if (score >= 20) {
-			logger.info('VideoScraper', `Invidious found`, { query: query.slice(0, 40), title: item.title.slice(0, 60), score });
-			try { await env.SCHEDULER_KV.put(cacheKey, JSON.stringify({ url: `${YT_WATCH}${item.videoId}`, title: item.title }), { expirationTtl: 1800 }); } catch {}
-			return `${YT_WATCH}${item.videoId}`;
+	// Step 2: DDG search — 1 subrequest
+	logger.debug('VideoScraper', `Trying DDG: "${query}"`);
+	const ddgItems = await searchDDGYouTube(query);
+	for (const item of ddgItems) {
+		const oembed = await validateOEmbed(item.videoId);
+		if (oembed) {
+			logger.info('VideoScraper', `DDG+oEmbed found`, { query: query.slice(0, 40), title: oembed.title.slice(0, 60) });
+			try { await env.SCHEDULER_KV.put(cacheKey, JSON.stringify({ url: item.url, title: oembed.title }), { expirationTtl: 1800 }); } catch {}
+			return item.url;
 		}
 	}
 
-	// Step 3: DDG fallback — 1 more subrequest
-	logger.debug('VideoScraper', `Trying DDG fallback: "${query}"`);
-	const ddgItems = await searchDDGYouTube(query);
-	for (const item of ddgItems) {
-		logger.info('VideoScraper', `DDG found`, { query: query.slice(0, 40), title: item.title.slice(0, 60) });
-		try { await env.SCHEDULER_KV.put(cacheKey, JSON.stringify({ url: `${YT_WATCH}${item.videoId}`, title: item.title }), { expirationTtl: 1800 }); } catch {}
-		return `${YT_WATCH}${item.videoId}`;
+	// Step 3: Invidious — 1 instance only (save subrequest budget)
+	try {
+		const invRes = await fetch(`https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video&sort=relevance`, {
+			headers: { 'User-Agent': 'discord-ai-bot/1.0' }, signal: AbortSignal.timeout(4000),
+		});
+		if (invRes.ok) {
+			const d: any = await invRes.json();
+			if (Array.isArray(d)) {
+				for (const v of d) {
+					if (!v.videoId) continue;
+					const score = videoTitleScore(query, v.title || '');
+					if (score >= 20) {
+						logger.info('VideoScraper', `Invidious found`, { query: query.slice(0, 40), title: (v.title || '').slice(0, 60), score });
+						try { await env.SCHEDULER_KV.put(cacheKey, JSON.stringify({ url: `${YT_WATCH}${v.videoId}`, title: v.title || '' }), { expirationTtl: 1800 }); } catch {}
+						return `${YT_WATCH}${v.videoId}`;
+					}
+				}
+			}
+		}
+	} catch { /* skip */ }
+
+	// Step 4: Final fallback — direct YouTube HTML search (1 subrequest)
+	logger.debug('VideoScraper', `Trying YT HTML: "${query}"`);
+	const ytHtmlItems = await searchYouTubeHTML(query);
+	for (const item of ytHtmlItems) {
+		const oembed = await validateOEmbed(item.videoId);
+		if (oembed) {
+			logger.info('VideoScraper', `YT HTML+oEmbed found`, { query: query.slice(0, 40), title: oembed.title.slice(0, 60) });
+			try { await env.SCHEDULER_KV.put(cacheKey, JSON.stringify({ url: `${YT_WATCH}${item.videoId}`, title: oembed.title }), { expirationTtl: 1800 }); } catch {}
+			return `${YT_WATCH}${item.videoId}`;
+		}
 	}
 
 	logger.warn('VideoScraper', `No video for: "${query}"`);

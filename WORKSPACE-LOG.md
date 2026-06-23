@@ -64,7 +64,36 @@ Discord bot berbasis **Cloudflare Workers** dengan **MCP (Model Context Protocol
 
 ---
 
-## 📁 Struktur File
+## � v6.1 — Image Accuracy + Turbo Layer + Prompt Fix
+**Date:** 23 Juni 2026
+**Version:** pending-commit
+
+### Changes
+| Area | What | Why |
+|------|------|-----|
+| **Image Search** | Jikan MAL official images, title score gate (≥40), AI vision validation | Eliminate wrong-image matches (e.g. Dragon Ball instead of Honkai) |
+| **Image Sources** | Brave Search API → fixed parsing, AniList expanded (banner+char), Google, DDG | More sources, higher accuracy |
+| **Scoring** | TitleScore: word-overlap based, multi-result polling per source | Stop relying on fuzzy search, pick best match |
+| **Budget** | 1 keyword/section, sequential sources, AI vision limited to borderline cases | Fix 50 subrequest limit |
+| **Video** | YOUTUBE_API_KEY added, improved scraper with oEmbed validation | 2 videos/article consistently |
+| **Turbo Layer** | Path fixed (`/ai/article` → `/article/heavy`), response parsing via parseArticleJSON | Turbo actually works now |
+| **Prompt** | Removed dummy examples (MAPPA, Kaguya-sama), forced research-based generation | No more template articles |
+| **Vercel** | Deployed turbo-server, env vars set (OPENCODE, NVIDIA, OPENROUTER, CF) | Turbo Layer live at turbo-server-mu.vercel.app |
+
+### Live Bindings (added)
+- `YOUTUBE_API_KEY` — YouTube Data API v3
+- `BRAVE_API_KEY` — Brave Search API images
+
+### Pipeline Status (latest test)
+```
+5 section • 3-5 gambar • 2 video • ~100s • ✅ No budget errors
+Article: real-time news (Oshi no Ko, Solo Leveling, Blue Box, etc.)
+Images: MAL official > AniList banner/char > Brave > Google > DDG
+```
+
+---
+
+## �📁 Struktur File
 
 ```
 discord-ai-bot/

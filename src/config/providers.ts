@@ -34,7 +34,7 @@ export const CHAT_PROVIDERS: AiProviderDef[] = [
 	{
 		name: 'Cloudflare Workers AI',
 		priority: 2,
-		model: '@cf/meta/llama-3.1-8b-instruct-fp8',
+		model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
 		type: 'cloudflare',
 	},
 	{
@@ -95,7 +95,7 @@ export const PROVIDER_MODELS: ProviderModelInfo[] = [
 		emoji: '🌤️',
 		note: 'Built-in, selalu available',
 		models: [
-			{ name: '@cf/meta/llama-3.1-8b-instruct-fp8', note: '8B parameter, fast & kreatif 🚀' },
+			{ name: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', note: '70B parameter, super kreatif & ngebut 🚀' },
 		],
 	},
 	{

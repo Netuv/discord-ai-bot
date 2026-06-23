@@ -34,6 +34,9 @@ export interface Env {
 	GOOGLE_SEARCH_API_KEY?: string;
 	GOOGLE_SEARCH_ENGINE_ID?: string;
 
+	// Brave Search
+	BRAVE_API_KEY?: string;
+
 	// GitHub
 	GITHUB_TOKEN?: string;
 

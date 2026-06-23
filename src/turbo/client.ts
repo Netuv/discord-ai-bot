@@ -26,8 +26,14 @@ export async function turboHeavyArticle(env: Env, topic: string, research: { sum
 	try {
 		const mod = await import('../ai/writer');
 		const prompt = mod.buildArticlePrompt(topic, research.summary || '', research.reviewSummary || '');
-		const result = await callTurbo(env, '/ai/article', { topic, research, prompt });
-		if (result && typeof result === 'object' && 'title' in (result as Record<string, unknown>)) return result as Record<string, unknown>;
+		const result = await callTurbo(env, '/article/heavy', { messages: [{ role: 'user', content: prompt }], model: undefined });
+		if (result && typeof result === 'object' && 'content' in (result as Record<string, unknown>)) {
+			const rawContent = (result as Record<string, unknown>).content as string;
+			if (rawContent) {
+				const article = mod.parseArticleJSON(rawContent);
+				return article as unknown as Record<string, unknown>;
+			}
+		}
 		return null;
 	} catch { return null; }
 }
