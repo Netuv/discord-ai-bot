@@ -22,16 +22,44 @@ export async function turboChat(env: Env, messages: Array<{ role: string; conten
 	return null;
 }
 
-export async function turboHeavyArticle(env: Env, topic: string, research: { summary?: string; reviewSummary?: string }): Promise<Record<string, unknown> | null> {
+export async function turboHeavyArticle(env: Env, topic: string, research: { summary?: string; reviewSummary?: string }, timeoutMs = 60000): Promise<Record<string, unknown> | null> {
 	try {
 		const mod = await import('../ai/writer');
 		const prompt = mod.buildArticlePrompt(topic, research.summary || '', research.reviewSummary || '');
-		const result = await callTurbo(env, '/article/heavy', { messages: [{ role: 'user', content: prompt }], model: undefined });
+		const result = await callTurbo(env, '/article/heavy', { messages: [{ role: 'user', content: prompt }], model: undefined }, timeoutMs);
 		if (result && typeof result === 'object' && 'content' in (result as Record<string, unknown>)) {
 			const rawContent = (result as Record<string, unknown>).content as string;
 			if (rawContent) {
 				const article = mod.parseArticleJSON(rawContent);
 				return article as unknown as Record<string, unknown>;
+			}
+		}
+		return null;
+	} catch { return null; }
+}
+
+/**
+ * Generate article via Vercel /article/generate endpoint.
+ * Vercel handles: prompt building + AI call + JSON parsing.
+ * Worker just sends topic + research data.
+ * Returns parsed Article or null on failure.
+ */
+export async function turboGenerateArticle(
+	env: Env,
+	topic: string,
+	research: { summary?: string; reviewSummary?: string },
+	timeoutMs = 60000,
+): Promise<Record<string, unknown> | null> {
+	try {
+		const result = await callTurbo(env, '/article/generate', {
+			topic,
+			summary: research.summary || '',
+			reviewSummary: research.reviewSummary || '',
+		}, timeoutMs);
+		if (result && typeof result === 'object' && 'article' in (result as Record<string, unknown>)) {
+			const article = (result as Record<string, unknown>).article as Record<string, unknown>;
+			if (article && typeof article === 'object' && 'title' in article && 'sections' in article) {
+				return article;
 			}
 		}
 		return null;

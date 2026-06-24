@@ -8,7 +8,8 @@ import type { Env } from '../../types/env';
 import { AiRouter } from '../../ai/router';
 import { researchArticle, generateArticle, generateFallbackArticle } from '../../ai/writer';
 import { publishArticle } from '../../discord/publisher';
-import { turboHeavyArticle } from '../../turbo/client';
+import { turboHeavyArticle, turboGenerateArticle } from '../../turbo/client';
+import type { Article } from '../../types/article';
 import { logger } from '../../core/logger';
 import { cronMatches } from './engine';
 import { getTasks, updateTask } from './storage';
@@ -169,36 +170,36 @@ export async function executeAiArticle(
 		logger.warn('Scheduler', 'Research gagal', { error: e.message });
 	}
 
-	const [workerArticle, turboArticle] = await Promise.all([
-		(async () => {
+	// Hybrid v7: Run Vercel Turbo (60s timeout) + Worker AI in PARALLEL
+	// Winner with valid result gets used — no sequential waiting
+	const [turboResult, workerResult] = await Promise.allSettled([
+		(async (): Promise<Record<string, unknown> | null> => {
 			try {
-				return await generateArticle(topic, research, env);
-			} catch {
-				return generateFallbackArticle(topic);
-			}
+				// Try /article/generate first (Vercel builds prompt + parses)
+				const r1 = await turboGenerateArticle(env, topic, research, 55000);
+				if (r1?.title && r1?.sections) return r1;
+				// Fallback to /article/heavy (Worker builds prompt, Vercel just calls AI)
+				return await turboHeavyArticle(env, topic, research, 55000);
+			} catch { return null; }
 		})(),
-		(async () => {
-			try {
-				return await turboHeavyArticle(env, topic, research);
-			} catch {
-				return null;
-			}
+		(async (): Promise<Article> => {
+			try { return await generateArticle(topic, research, env); }
+			catch { return generateFallbackArticle(topic); }
 		})(),
 	]);
 
+	const turboArticle = turboResult.status === 'fulfilled' ? turboResult.value : null;
+	const workerArticle = workerResult.status === 'fulfilled' ? workerResult.value : generateFallbackArticle(topic);
+
 	const rawArticle =
-		turboArticle &&
-		typeof turboArticle === 'object' &&
-		'title' in turboArticle &&
-		'sections' in turboArticle
+		turboArticle && typeof turboArticle === 'object' && 'title' in turboArticle && 'sections' in turboArticle
 			? turboArticle
 			: workerArticle;
-	const article = rawArticle as any;
+	const article = rawArticle as unknown as Article;
 	const result = await publishArticle(env.DISCORD_TOKEN, channelId, article, env);
 
 	if (!result.success) {
-		const errDetail =
-			result.errors.length > 0 ? ` — ${result.errors[0]}` : '';
+		const errDetail = result.errors.length > 0 ? ` — ${result.errors[0]}` : '';
 		return `⚠️ Gagal publish: ${result.error}${errDetail}`;
 	}
 

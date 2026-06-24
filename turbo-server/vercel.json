@@ -22,6 +22,10 @@
       "dest": "api/index.js"
     },
     {
+      "src": "/article/generate",
+      "dest": "api/index.js"
+    },
+    {
       "src": "/discord/followup",
       "dest": "api/index.js"
     }
