@@ -1,0 +1,40 @@
+{
+  "name": "discord-ai-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+
+  // AI binding — Cloudflare Workers AI (free)
+  "ai": { "binding": "AI" },
+
+  // KV namespace — transient state
+  "kv_namespaces": [
+    {
+      "binding": "BOT_KV",
+      "id": "7cc7694e64014014b6792760b4890757",
+      "preview_id": "7cc7694e64014014b6792760b4890757"
+    }
+  ],
+
+  // D1 Database — primary storage
+  "d1_databases": [
+    {
+      "binding": "CONTENT_DB",
+      "database_name": "discord-ai-bot-db",
+      "database_id": "cb6de4d6-f9d0-4f3f-ba24-f0ef38839665",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Cloudflare Queues — reliable task delivery (Requires Paid Plan)
+
+  // NOTE: API keys (OLLAMA_WEB_SEARCH_KEY, TAVILY_API_KEY, etc.) are set via `npx wrangler secret put`.
+  // DO NOT hardcode secrets here — they will be leaked to git.
+
+  // Cron triggers — every 6 hours
+  "triggers": {
+    "crons": ["0 */6 * * *"]
+  }
+}

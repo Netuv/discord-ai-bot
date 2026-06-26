@@ -1,0 +1,47 @@
+# --- Dependencies ---
+node_modules/
+.pnp
+.pnp.js
+
+# --- Build output ---
+dist/
+build/
+*.tsbuildinfo
+
+# --- Wrangler / Cloudflare ---
+.wrangler/
+*.wrangler.*
+
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
+*.local
+setup-secrets.ps1
+
+# --- OS files ---
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# --- IDE / Editor ---
+.vscode/settings.json
+.vscode/tasks.json
+*.swp
+*.swo
+*~
+
+# --- Logs & Debug ---
+logs/
+*.log
+npm-debug.log*
+
+# --- Copilot cache ---
+.copilot-specs-cache/
+
+# --- Backup archives ---
+Version-Backup/*.zip
+
+# --- Testing ---
+coverage/
+.nyc_output/

@@ -1,0 +1,41 @@
+{
+  "name": "discord-ai-bot",
+  "version": "4.0.0",
+  "description": "Autonomous Discord AI content engine on Cloudflare Workers",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "migrations:apply": "wrangler d1 migrations apply discord-ai-bot-db",
+    "migrations:list": "wrangler d1 migrations list discord-ai-bot-db",
+    "register-commands": "npx tsx src/scripts/register-commands.ts"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "ai",
+    "cloudflare-workers",
+    "anime",
+    "manga"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudflare/mcp-server-cloudflare": "^0.2.0",
+    "cf-workers-og": "^3.0.1",
+    "discord-api-types": "^0.38.49",
+    "discord-interactions": "^4.4.0",
+    "hono": "^4.6.14",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.95.0"
+  }
+}
